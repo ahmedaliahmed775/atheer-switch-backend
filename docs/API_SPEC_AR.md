@@ -2,7 +2,7 @@
 
 ## مقدمة
 
-يقدم هذا المستند توثيقًا شاملاً لواجهة برمجة التطبيقات (API) الخاصة ببوابة الدفع عالية الأداء Atheer Switch. تهدف هذه الواجهة إلى تمكين تطبيقات الأندرويد (عبر Atheer Android SDK) من إرسال طلبات الدفع ومعالجتها بشكل آمن وفعال. تقوم Atheer Switch بدور الوسيط المالي، حيث تتحقق من صحة الطلبات، وتمنع تكرار الإنفاق، وتوجه المعاملات إلى مزودي خدمات الدفع المختلفين مثل Jawali و WeCash.
+يقدم هذا المستند توثيقًا شاملاً لواجهة برمجة التطبيقات (API) الخاصة ببوابة الدفع عالية الأداء Atheer Switch. تهدف هذه الواجهة إلى تمكين تطبيقات الأندرويد (عبر Atheer Android SDK) من إرسال طلبات الدفع ومعالجتها بشكل آمن وفعال. تقوم Atheer Switch بدور الوسيط المالي، حيث تتحقق من صحة الطلبات، وتمنع تكرار الإنفاق، وتوجه المعاملات إلى مزودي خدمات الدفع المختلفين مثل Jawali و WeCash، بالإضافة إلى إدارة وتوزيع التوكنز الأوفلاين.
 
 ## المصادقة (Authentication)
 
@@ -30,6 +30,8 @@
 
 تستخدم هذه النقطة لمعالجة طلب دفع جديد من Atheer Android SDK.
 
+**ملاحظة هامة:** تتوقع هذه النقطة الآن أن تكون بيانات الطلب الفعلية (مثل `amount`, `provider`, `customerMobile`) متداخلة داخل كائن `body` آخر ضمن جسم الطلب الرئيسي (أي `req.body.body`).
+
 **الترويسات المطلوبة:**
 
 - `x-atheer-api-key`: مفتاح API الخاص بالتاجر.
@@ -37,15 +39,30 @@
 
 **جسم الطلب (Request Body):**
 
+```json
+{
+  "body": {
+    "amount": 100.50,
+    "currency": "YER",
+    "provider": "JEEB",
+    "customerMobile": "777123456",
+    "nonce": "req_123456789",
+    "metadata": {
+      "orderId": "ORD-001"
+    }
+  }
+}
+```
+
 | الحقل          | النوع    | مطلوب | الوصف                                                               | مثال                 |
 | :------------- | :------ | :---- | :------------------------------------------------------------------ | :------------------- |
-| `amount`       | `number`  | نعم   | قيمة المبلغ المراد دفعه.                                           | `100.50`             |
-| `currency`     | `string`  | لا    | رمز العملة (افتراضي: `YER`).                                        | `YER`                |
-| `provider`     | `string`  | نعم   | مزود خدمة الدفع المستهدف (مثال: `jawali`, `wecash`, `mock`).       | `jawali`             |
-| `customerMobile` | `string`  | نعم   | رقم هاتف العميل الذي يقوم بالدفع.                                   | `777123456`          |
-| `nonce`        | `string`  | نعم   | قيمة فريدة للطلب (يمكن إرسالها في الترويسة أو هنا).               | `req_123456789`      |
-| `metadata`     | `object`  | لا    | بيانات إضافية اختيارية تتعلق بالمعاملة.                           | `{ 
-  "orderId": "ORD-001" }` |
+| `body`         | `object`  | نعم   | كائن يحتوي على بيانات الطلب الفعلية.                               | `{ ... }`            |
+| `body.amount`       | `number`  | نعم   | قيمة المبلغ المراد دفعه.                                           | `100.50`             |
+| `body.currency`     | `string`  | لا    | رمز العملة (افتراضي: `YER`).                                        | `YER`                |
+| `body.provider`     | `string`  | نعم   | مزود خدمة الدفع المستهدف (مثال: `JEEB`, `JAWALI`, `WECASH`, `mock`).       | `JEEB`             |
+| `body.customerMobile` | `string`  | نعم   | رقم هاتف العميل الذي يقوم بالدفع.                                   | `777123456`          |
+| `body.nonce`        | `string`  | نعم   | قيمة فريدة للطلب (يمكن إرسالها في الترويسة أو هنا).               | `req_123456789`      |
+| `body.metadata`     | `object`  | لا    | بيانات إضافية اختيارية تتعلق بالمعاملة.                           | `{ "orderId": "ORD-001" }` |
 
 **استجابة ناجحة (Success Response - Status 200 OK):**
 
@@ -90,7 +107,66 @@
 }
 ```
 
-### 2. الحصول على حالة معاملة
+### 2. طلب تخصيص توكنز أوفلاين
+
+`POST /api/v1/payments/tokens/provision`
+
+تستخدم هذه النقطة لطلب تخصيص توكنز أوفلاين من Atheer Switch لعميل معين ومزود محدد. يتم استخدام هذه التوكنز لاحقًا في عمليات الدفع الأوفلاين.
+
+**الترويسات المطلوبة:**
+
+- `x-atheer-api-key`: مفتاح API الخاص بالتاجر.
+
+**جسم الطلب (Request Body):**
+
+```json
+{
+  "body": {
+    "providerName": "JEEB",
+    "customerId": "777123456",
+    "count": 1
+  }
+}
+```
+
+| الحقل          | النوع    | مطلوب | الوصف                                                               | مثال                 |
+| :------------- | :------ | :---- | :------------------------------------------------------------------ | :------------------- |
+| `body`         | `object`  | نعم   | كائن يحتوي على بيانات طلب التوكنز.                                | `{ ... }`            |
+| `body.providerName` | `string`  | نعم   | اسم مزود المحفظة المطلوب (مثال: `JEEB`, `JAWALI`).                 | `JEEB`               |
+| `body.customerId`   | `string`  | نعم   | معرف العميل الذي سيتم تخصيص التوكنز له (عادة رقم الهاتف).         | `777123456`          |
+| `body.count`        | `number`  | لا    | عدد التوكنز المطلوب تخصيصها (افتراضي: 1).                          | `1`                  |
+
+**استجابة ناجحة (Success Response - Status 200 OK):**
+
+```json
+{
+  "status": "success",
+  "message": "تم تخصيص 1 توكنز بنجاح لمزود JEEB",
+  "data": {
+    "tokens": [
+      {
+        "id": "uuid-of-token-1",
+        "tokenValue": "TOKEN_VALUE_1",
+        "providerName": "JEEB",
+        "expiryDate": "2027-03-21T10:00:00.000Z"
+      }
+    ],
+    "customerId": "777123456",
+    "provider": "JEEB"
+  }
+}
+```
+
+**استجابة خطأ (Error Response - Status 400 Bad Request / 500 Internal Server Error):**
+
+```json
+{
+  "status": "error",
+  "message": "لا توجد توكنز متاحة حالياً للمزود: JEEB"
+}
+```
+
+### 3. الحصول على حالة معاملة
 
 `GET /api/v1/payments/status/:id`
 
@@ -117,7 +193,7 @@
     "nonce": "unique_request_id_123",
     "amount": "100.50",
     "currency": "YER",
-    "provider": "jawali",
+    "provider": "JEEB",
     "providerRef": "reference-from-provider",
     "status": "success",
     "customerMobile": "777123456",
@@ -139,7 +215,7 @@
 }
 ```
 
-### 3. الحصول على إحصائيات مزود خدمة
+### 4. الحصول على إحصائيات مزود خدمة
 
 `GET /api/v1/admin/stats/:provider`
 
@@ -151,7 +227,7 @@
 
 | المعلمة    | النوع   | الوصف                               | مثال    |
 | :--------- | :----- | :---------------------------------- | :------ |
-| `provider` | `string` | اسم مزود الخدمة (مثال: `jawali`). | `jawali` |
+| `provider` | `string` | اسم مزود الخدمة (مثال: `JEEB`). | `JEEB` |
 
 **استجابة ناجحة (Success Response - Status 200 OK):**
 
@@ -159,7 +235,7 @@
 {
   "success": true,
   "data": {
-    "provider": "jawali",
+    "provider": "JEEB",
     "totalCount": 1500,
     "successCount": 1450,
     "failedCount": 50,
@@ -170,7 +246,7 @@
 }
 ```
 
-### 4. الحصول على إحصائيات جميع مزودي الخدمة
+### 5. الحصول على إحصائيات جميع مزودي الخدمة
 
 `GET /api/v1/admin/stats/all`
 
@@ -185,7 +261,7 @@
   "success": true,
   "data": [
     {
-      "provider": "jawali",
+      "provider": "JEEB",
       "totalCount": 1500,
       "successCount": 1450,
       "failedCount": 50,
@@ -194,7 +270,16 @@
       "successRate": "96.67%"
     },
     {
-      "provider": "wecash",
+      "provider": "JAWALI",
+      "totalCount": 800,
+      "successCount": 780,
+      "failedCount": 20,
+      "totalVolume": 80000.00,
+      "dailyVolume": 2500.00,
+      "successRate": "97.50%"
+    },
+    {
+      "provider": "WECASH",
       "totalCount": 800,
       "successCount": 780,
       "failedCount": 20,

@@ -6,7 +6,9 @@ import routerService from '../services/routerService.js';
  * يعالج طلبات الدفع الواردة من Atheer Android SDK.
  */
 export const processPayment = async (req, res, next) => {
-  const { amount, currency, provider, customerMobile, nonce, metadata } = req.body;
+  // فك تغليف البيانات (Unwrapping) من كائن body المتداخل كما هو مطلوب في المعمارية الجديدة
+  const data = req.body.body || req.body;
+  const { amount, currency, provider, customerMobile, nonce, metadata } = data;
   const merchantId = req.merchant.id;
 
   try {
@@ -22,7 +24,7 @@ export const processPayment = async (req, res, next) => {
       metadata
     });
 
-    // 2. توجيه المعاملة إلى مزود الخدمة المناسب (Jawali/WeCash)
+    // 2. توجيه المعاملة إلى مزود الخدمة المناسب (JEEB/JAWALI) عبر نظام الأدابترز
     const result = await routerService.routeTransaction({
       transactionId: transaction.id,
       amount,

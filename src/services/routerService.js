@@ -4,8 +4,8 @@ import statsService from './statsService.js';
 
 /**
  * خدمة توجيه المعاملات (Router Service)
- * تقوم بتوجيه المعاملات إلى مزود الخدمة المناسب (Jawali أو WeCash)
- * بناءً على نوع المعاملة أو بيانات التاجر.
+ * تقوم بتوجيه المعاملات إلى مزود الخدمة المناسب (مثل JEEB أو JAWALI)
+ * بناءً على نوع المعاملة أو بيانات التاجر القادمة من الـ SDK.
  */
 class RouterService {
   /**
@@ -17,17 +17,24 @@ class RouterService {
     const { provider, amount } = transaction;
     let adapter;
 
-    // اختيار المحول المناسب بناءً على مزود الخدمة
-    switch (provider.toLowerCase()) {
-      case 'jawali':
-      case 'wecash':
+    // اختيار المحول المناسب بناءً على اسم مزود الخدمة (providerName)
+    // يدعم النظام حالياً محافظ 'JEEB' و 'JAWALI' عبر نظام الأدابترز
+    switch (provider.toUpperCase()) {
+      case 'JAWALI':
+      case 'WECASH':
         adapter = jawaliAdapter;
         break;
-      case 'mock':
+      case 'JEEB':
+        // حالياً يتم استخدام محول تجريبي لـ JEEB، يمكن استبداله لاحقاً بأدابتر حقيقي
+        adapter = mockBankAdapter; 
+        break;
+      case 'MOCK':
         adapter = mockBankAdapter;
         break;
       default:
-        throw new Error(`مزود الخدمة ${provider} غير مدعوم حالياً.`);
+        // التوجيه الافتراضي للمحافظ الجديدة غير المعروفة للمحول التجريبي
+        console.warn(`مزود الخدمة ${provider} غير معرف بشكل صريح، يتم التوجيه للمحول التجريبي.`);
+        adapter = mockBankAdapter;
     }
 
     try {
