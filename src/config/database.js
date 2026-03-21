@@ -5,21 +5,34 @@ dotenv.config();
 
 const password = process.env.DB_PASS || process.env.DB_PASSWORD || 'postgres';
 
-/** اتصال PostgreSQL المُدار (DigitalOcean وغيره) يتطلب SSL غالباً — عيّن DB_SSL=true */
+/**
+ * PostgreSQL المُدار (DigitalOcean وغيره): تمرير rejectUnauthorized: false
+ * يمنع خطأ "self-signed certificate in certificate chain" مع شهادات المنصة.
+ * للتحقق الصارم من الشهادة: DB_SSL_REJECT_UNAUTHORIZED=true
+ */
 function sslDialectOptions() {
-  const explicit = process.env.DB_SSL === 'true';
-  const fromUrl =
-    process.env.DATABASE_URL &&
-    /sslmode=require|ssl=true/i.test(process.env.DATABASE_URL);
-  if (explicit || fromUrl) {
-    return {
-      ssl: {
-        require: true,
-        rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED === 'true'
-      }
-    };
+  if (process.env.DB_SSL === 'false') {
+    return {};
   }
-  return {};
+
+  const url = process.env.DATABASE_URL || '';
+  const host = process.env.DB_HOST || '';
+
+  const mustUseSsl =
+    process.env.DB_SSL === 'true' ||
+    /sslmode|ssl\s*=\s*true/i.test(url) ||
+    /\.db\.ondigitalocean\.com|\.amazonaws\.com|\.azure\.com/i.test(url + host);
+
+  if (!mustUseSsl) {
+    return {};
+  }
+
+  return {
+    ssl: {
+      require: true,
+      rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED === 'true'
+    }
+  };
 }
 
 function buildSequelize() {
