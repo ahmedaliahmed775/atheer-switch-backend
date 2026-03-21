@@ -23,7 +23,7 @@ const startServer = async () => {
     console.log('✅ تمت مزامنة نماذج قاعدة البيانات بنجاح.');
 
     // 3. بدء الاستماع للطلبات على المنفذ المحدد
-    app.listen(PORT, () => {
+    app.listen(PORT, '0.0.0.0', () => {
       console.log(`🚀 خادم Atheer Switch يعمل الآن على المنفذ: ${PORT}`);
       console.log(`🌍 البيئة الحالية: ${process.env.NODE_ENV || 'development'}`);
     });

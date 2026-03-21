@@ -1,13 +1,15 @@
 import express from 'express';
 import { getProviderStats, getAllStats } from '../controllers/statsController.js';
+import { requireAdminApiKey } from '../middlewares/adminAuth.js';
 
 const router = express.Router();
 
 /**
  * مسارات الإدارة (Admin Routes)
- * تستخدم لمراقبة أداء النظام وإحصائيات مزودي الخدمة.
- * ملاحظة: في بيئة الإنتاج، يجب حماية هذه المسارات بـ Middleware خاص بالإدارة.
+ * في الإنتاج: يتطلب ترويسة x-atheer-admin-key تساوي ADMIN_API_KEY.
  */
+
+router.use(requireAdminApiKey);
 
 /**
  * @route   GET /api/v1/admin/stats/all

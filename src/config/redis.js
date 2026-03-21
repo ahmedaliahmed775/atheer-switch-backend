@@ -1,27 +1,33 @@
 import Redis from 'ioredis';
 import dotenv from 'dotenv';
 
-// تحميل المتغيرات البيئية
 dotenv.config();
 
-/**
- * إعداد الاتصال بخادم Redis
- * يتم استخدام Redis لإدارة التحقق من تكرار الطلبات (Idempotency)
- * وتخزين الإحصائيات اللحظية لمزودي الخدمة.
- */
-const redis = new Redis({
-  host: process.env.REDIS_HOST || 'localhost',
-  port: process.env.REDIS_PORT || 6379,
-  password: process.env.REDIS_PASS || undefined,
-  retryStrategy: (times) => {
-    // استراتيجية إعادة المحاولة في حال فشل الاتصال
-    const delay = Math.min(times * 50, 2000);
-    return delay;
-  },
-  maxRetriesPerRequest: 3
-});
+const retryStrategy = (times) => Math.min(times * 50, 2000);
 
-// معالجة أحداث الاتصال
+function buildRedis() {
+  const url = process.env.REDIS_URL;
+  if (url) {
+    return new Redis(url, {
+      maxRetriesPerRequest: 3,
+      retryStrategy
+    });
+  }
+
+  const useTls = process.env.REDIS_TLS === 'true';
+
+  return new Redis({
+    host: process.env.REDIS_HOST || 'localhost',
+    port: parseInt(process.env.REDIS_PORT || '6379', 10),
+    password: process.env.REDIS_PASS || undefined,
+    tls: useTls ? { rejectUnauthorized: false } : undefined,
+    maxRetriesPerRequest: 3,
+    retryStrategy
+  });
+}
+
+const redis = buildRedis();
+
 redis.on('connect', () => {
   console.log('✅ تم الاتصال بخادم Redis بنجاح.');
 });

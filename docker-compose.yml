@@ -13,8 +13,11 @@ services:
       - DB_NAME=atheer_switch
       - DB_USER=postgres
       - DB_PASS=postgres
+      - DB_SSL=false
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - REDIS_TLS=false
+      - ADMIN_API_KEY=local_dev_admin_key_only_not_for_prod
     depends_on:
       - postgres
       - redis

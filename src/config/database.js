@@ -1,36 +1,73 @@
 import { Sequelize } from 'sequelize';
 import dotenv from 'dotenv';
 
-// تحميل المتغيرات البيئية
 dotenv.config();
 
-/**
- * إعداد الاتصال بقاعدة بيانات PostgreSQL
- * يتم استخدام Sequelize كـ ORM لإدارة العمليات على قاعدة البيانات
- */
-const sequelize = new Sequelize(
-  process.env.DB_NAME || 'atheer_switch',
-  process.env.DB_USER || 'postgres',
-  process.env.DB_PASS || 'postgres',
-  {
-    host: process.env.DB_HOST || 'localhost',
-    port: process.env.DB_PORT || 5432,
-    dialect: 'postgres',
-    logging: false, // تعطيل سجلات الاستعلامات في بيئة الإنتاج لتحسين الأداء
-    pool: {
-      max: 20, // الحد الأقصى لعدد الاتصالات في المجمع
-      min: 5,  // الحد الأدنى لعدد الاتصالات
-      acquire: 30000,
-      idle: 10000
-    },
-    define: {
-      timestamps: true, // إضافة createdAt و updatedAt تلقائياً
-      underscored: true // استخدام snake_case لأسماء الأعمدة
-    }
-  }
-);
+const password = process.env.DB_PASS || process.env.DB_PASSWORD || 'postgres';
 
-// اختبار الاتصال بقاعدة البيانات
+/** اتصال PostgreSQL المُدار (DigitalOcean وغيره) يتطلب SSL غالباً — عيّن DB_SSL=true */
+function sslDialectOptions() {
+  const explicit = process.env.DB_SSL === 'true';
+  const fromUrl =
+    process.env.DATABASE_URL &&
+    /sslmode=require|ssl=true/i.test(process.env.DATABASE_URL);
+  if (explicit || fromUrl) {
+    return {
+      ssl: {
+        require: true,
+        rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED === 'true'
+      }
+    };
+  }
+  return {};
+}
+
+function buildSequelize() {
+  const dbUrl = process.env.DATABASE_URL;
+  if (dbUrl) {
+    return new Sequelize(dbUrl, {
+      dialect: 'postgres',
+      logging: false,
+      dialectOptions: sslDialectOptions(),
+      pool: {
+        max: 20,
+        min: 5,
+        acquire: 30000,
+        idle: 10000
+      },
+      define: {
+        timestamps: true,
+        underscored: true
+      }
+    });
+  }
+
+  return new Sequelize(
+    process.env.DB_NAME || 'atheer_switch',
+    process.env.DB_USER || 'postgres',
+    password,
+    {
+      host: process.env.DB_HOST || 'localhost',
+      port: parseInt(process.env.DB_PORT || '5432', 10),
+      dialect: 'postgres',
+      logging: false,
+      dialectOptions: sslDialectOptions(),
+      pool: {
+        max: 20,
+        min: 5,
+        acquire: 30000,
+        idle: 10000
+      },
+      define: {
+        timestamps: true,
+        underscored: true
+      }
+    }
+  );
+}
+
+const sequelize = buildSequelize();
+
 export const connectDB = async () => {
   try {
     await sequelize.authenticate();
