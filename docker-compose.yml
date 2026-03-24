@@ -5,9 +5,12 @@ services:
   app:
     build: .
     ports:
-      - "${PORT:-3000}:3000"
+      - "4000:4000"
+    env_file:      # <--- أضف هذا السطر
+
+      - .env
     environment:
-      - NODE_ENV=production
+      - NODE_ENV=development
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_NAME=atheer_switch

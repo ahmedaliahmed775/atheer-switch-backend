@@ -1,10 +1,5 @@
 import axios from 'axios';
 
-/**
- * محول Jawali (Jawali Adapter)
- * يقوم بتحويل طلبات الدفع من تنسيق Atheer SDK إلى تنسيق Jawali/WeCash.
- * ينفذ عملية "PAYAG.ECOMMCASHOUT" (سحب نقدي للتجارة الإلكترونية).
- */
 class JawaliAdapter {
   constructor() {
     this.apiUrl = process.env.JAWALI_API_URL;
@@ -12,57 +7,37 @@ class JawaliAdapter {
     this.apiKey = process.env.JAWALI_API_KEY;
   }
 
-  /**
-   * تنفيذ عملية الدفع
-   * @param {Object} data - بيانات المعاملة من SDK
-   * @returns {Promise<Object>} - نتيجة المعاملة من Jawali
-   */
   async processPayment(data) {
     try {
-      // تحويل الحقول إلى تنسيق Jawali (PAYAG.ECOMMCASHOUT)
+      // تنظيف الرابط من أي مائلات زائدة
+      const baseUrl = this.apiUrl.replace(/\/+$/, "");
+      const fullUrl = `${baseUrl}/merchant/switch-charge`;
+      
+      console.log(`[DEBUG] Calling Wallet URL: ${fullUrl}`);
+
       const payload = {
-        serviceCode: 'PAYAG.ECOMMCASHOUT',
-        agentWallet: this.agentWallet,
-        receiverMobile: data.customerMobile,
         amount: data.amount,
-        currency: data.currency || 'YER',
-        voucher: data.voucher || '', // رقم القسيمة إذا وجد
-        externalRef: data.transactionId, // الرقم المرجعي الخاص بنا
-        timestamp: new Date().toISOString()
+        customerMobile: data.customerMobile,
+        merchantId: this.agentWallet,
+        nonce: `SW-${Date.now()}-${Math.random().toString(36).substring(5)}`
       };
 
-      // إرسال الطلب إلى Jawali API
-      const response = await axios.post(`${this.apiUrl}/process`, payload, {
+      const response = await axios.post(fullUrl, payload, {
         headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
+          'x-atheer-api-key': this.apiKey,
           'Content-Type': 'application/json'
         },
-        timeout: 15000 // مهلة 15 ثانية
+        timeout: 10000
       });
 
-      // معالجة استجابة Jawali
-      if (response.data && response.data.status === 'SUCCESS') {
-        return {
-          success: true,
-          providerRef: response.data.transactionId,
-          message: 'تمت عملية الدفع بنجاح عبر Jawali.'
-        };
-      } else {
-        return {
-          success: false,
-          errorCode: response.data.errorCode || 'JAWALI_ERROR',
-          message: response.data.errorMessage || 'فشلت المعاملة من قبل مزود الخدمة.'
-        };
+      if (response.data && response.data.status === 'ACCEPTED') {
+        return { success: true, providerRef: response.data.providerRef, message: 'تمت العملية.' };
       }
+      return { success: false, message: response.data.message };
     } catch (error) {
-      console.error('خطأ في محول Jawali:', error.message);
-      return {
-        success: false,
-        errorCode: 'PROVIDER_CONNECTION_ERROR',
-        message: 'تعذر الاتصال بمزود خدمة Jawali حالياً.'
-      };
+      console.error(`[ERROR] Jawali Adapter: ${error.response?.status} - ${JSON.stringify(error.response?.data)}`);
+      return { success: false, errorCode: 'CONNECTION_ERROR', message: 'فشل الاتصال بالمحفظة.' };
     }
   }
 }
-
 export default new JawaliAdapter();

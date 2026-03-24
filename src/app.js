@@ -19,7 +19,12 @@ const app = express();
  * إعداد الـ Middlewares الأساسية
  */
 
-app.use(helmet()); // تأمين الترويسات (Security Headers)
+app.use(helmet({
+  contentSecurityPolicy: false,
+}));
+app.use(cors());
+app.use(express.json());
+app.use(morgan('dev'));
 app.use(cors());   // السماح بالطلبات من نطاقات مختلفة
 app.use(express.json()); // معالجة بيانات JSON في الطلبات
 app.use(morgan('dev'));  // تسجيل الطلبات في الكونسول (Logging)
