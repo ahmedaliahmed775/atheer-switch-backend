@@ -82,6 +82,22 @@ const Transaction = sequelize.define('Transaction', {
     type: DataTypes.JSONB,
     allowNull: true,
     comment: 'بيانات إضافية متعلقة بالمعاملة'
+  },
+  signature: {
+    type: DataTypes.STRING,
+    allowNull: false,
+    comment: 'التوقيع الرقمي للمعاملة (Biometric Cryptogram)'
+  },
+  authMethod: {
+    type: DataTypes.STRING,
+    allowNull: false,
+    defaultValue: 'BIOMETRIC_CRYPTOGRAM',
+    comment: 'طريقة التوثيق (افتراضي: BIOMETRIC_CRYPTOGRAM)'
+  },
+  transactionType: {
+    type: DataTypes.ENUM('P2M', 'P2P'),
+    allowNull: false,
+    comment: 'نوع المعاملة: P2M (شراء من تاجر) أو P2P (تحويل بين الأفراد)'
   }
 }, {
   tableName: 'transactions',

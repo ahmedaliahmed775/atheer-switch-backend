@@ -1,57 +1,72 @@
 import Transaction from '../models/Transaction.js';
 import routerService from '../services/routerService.js';
 
+// أدوات التشفير للتحقق من التوقيع البيومتري
+import { verifyBiometricSignature } from '../utils/cryptoUtils.js';
+import OfflineToken from '../models/OfflineToken.js';
+
 export const processPayment = async (req, res, next) => {
   try {
+    /**
+     * 🚦 منطق معالجة الدفع بنموذج التوقيع البيومتري (Biometric Cryptogram)
+     * يقبل فقط الحقول الأساسية من SDK:
+     * amount, receiverAccount, transactionType, atheerToken, signature, timestamp, nonce
+     */
     const data = req.body.body || req.body;
-    const { amount, currency, provider, customerMobile, receiverMobile, atheerToken, nonce, metadata } = data;
-    const merchantId = req.merchant?.id || null;
+    const { amount, receiverAccount, transactionType, atheerToken, signature, timestamp, nonce } = data;
 
     // تحقق من وجود الحقول المطلوبة
-    if (!receiverMobile) {
-      return res.status(400).json({ success: false, error: { message: 'رقم هاتف المستلم (receiverMobile) مطلوب.' } });
-    }
-    if (!atheerToken) {
-      return res.status(400).json({ success: false, error: { message: 'توكن الدفع (atheerToken) مطلوب.' } });
+    if (!amount || !receiverAccount || !transactionType || !atheerToken || !signature || !timestamp || !nonce) {
+      return res.status(400).json({ success: false, error: { message: 'الحقول الأساسية مطلوبة: amount, receiverAccount, transactionType, atheerToken, signature, timestamp, nonce' } });
     }
 
-    // تحقق من التوكن
-    let tokenRecord;
-    try {
-      const tokenService = (await import('../services/tokenService.js')).default;
-      tokenRecord = await tokenService.verifyAndUseToken(atheerToken, customerMobile);
-    } catch (err) {
-      return res.status(400).json({ success: false, error: { message: err.message || 'فشل التحقق من التوكن' } });
+    // جلب التوكن للتحقق من المفتاح العام
+    const tokenRecord = await OfflineToken.findOne({ where: { tokenValue: atheerToken } });
+    if (!tokenRecord || !tokenRecord.publicKey) {
+      return res.status(401).json({ success: false, error: { message: 'توكن غير صالح أو المفتاح العام غير مسجل.' } });
     }
 
-    // إنشاء سجل العملية
+    // التحقق من التوقيع الرقمي باستخدام المفتاح العام
+    const isValid = verifyBiometricSignature({
+      publicKey: tokenRecord.publicKey,
+      signature,
+      atheerToken,
+      timestamp
+    });
+    if (!isValid) {
+      return res.status(401).json({ success: false, error: { message: 'فشل التحقق من التوقيع البيومتري.' } });
+    }
+
+    // استخراج رقم هاتف الدافع من سجل التوكن (عدم الثقة بأي رقم مرسل من العميل)
+    const senderMobile = tokenRecord.assignedTo;
+    if (!senderMobile) {
+      return res.status(401).json({ success: false, error: { message: 'توكن غير مرتبط بمستخدم.' } });
+    }
+
+    // إنشاء سجل المعاملة
     const transaction = await Transaction.create({
-      merchantId,
       amount,
-      currency: currency || 'YER',
-      provider,
-      customerMobile,
-      receiverMobile,
       atheerToken,
       nonce,
-      status: 'pending',
-      metadata
+      signature,
+      authMethod: 'BIOMETRIC_CRYPTOGRAM',
+      transactionType,
+      customerMobile: senderMobile,
+      receiverMobile: receiverAccount,
+      status: 'pending'
     });
 
-    // تمرير بيانات المستلم والدافع
+    // تمرير المعاملة إلى خدمة التوجيه (RouterService)
     const result = await routerService.routeTransaction({
       transactionId: transaction.id,
       amount,
-      currency,
-      provider,
-      customerMobile,
-      receiverMobile,
-      metadata
+      senderMobile,
+      receiverAccount,
+      transactionType
     });
 
     if (result.success) {
       await transaction.update({ status: 'success', providerRef: result.providerRef });
-      // حفظ نتيجة العملية في Redis لمنع التكرار
       if (typeof res.saveIdempotency === 'function') {
         await res.saveIdempotency({ transactionId: transaction.id, status: 'success', providerRef: result.providerRef });
       }
@@ -60,13 +75,7 @@ export const processPayment = async (req, res, next) => {
         data: { transactionId: transaction.id, status: 'success', providerRef: result.providerRef }
       });
     } else {
-      // إعادة حالة التوكن إلى PROVISIONED إذا فشلت العملية المالية
-      try {
-        const tokenService = (await import('../services/tokenService.js')).default;
-        await tokenRecord.update({ status: 'PROVISIONED' });
-      } catch (e) {}
       await transaction.update({ status: 'failed', errorMessage: result.message });
-      // توضيح رسالة الخطأ
       let errorMsg = result.message || 'فشل تنفيذ العملية المالية.';
       if (result.errorCode === 'CONNECTION_ERROR') {
         errorMsg = 'فشل الاتصال بالمحفظة. حاول لاحقاً.';
@@ -78,7 +87,7 @@ export const processPayment = async (req, res, next) => {
       return res.status(400).json({ success: false, error: { message: errorMsg } });
     }
   } catch (error) {
-    console.error('❌ Critical Error:', error.message);
+    console.error('❌ خطأ حرج:', error.message);
     res.status(500).json({ success: false, error: { message: error.message } });
   }
 };

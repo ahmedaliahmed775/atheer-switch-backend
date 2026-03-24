@@ -3,6 +3,43 @@
  * يستخدم لاختبار النظام في بيئة التطوير دون الحاجة للاتصال بمزود خدمة حقيقي.
  */
 class MockBankAdapter {
+    /**
+     * محاكاة تحويل رصيد بين رقمين جوال (P2P)
+     * @param {Object} params
+     * @param {string} params.senderMobile - رقم جوال الدافع
+     * @param {string} params.receiverMobile - رقم جوال المستلم
+     * @param {number|string} params.amount - قيمة التحويل
+     * @returns {Promise<Object>} - نتيجة التحويل
+     */
+    async p2pTransfer({ senderMobile, receiverMobile, amount }) {
+      // محاكاة تأخير الشبكة
+      await new Promise(resolve => setTimeout(resolve, 800));
+
+      // تحقق تجريبي: رفض إذا المبلغ غير موجب أو أحد الأرقام ناقص
+      if (!senderMobile || !receiverMobile || !amount || Number(amount) <= 0) {
+        return {
+          success: false,
+          errorCode: 'INVALID_INPUT',
+          message: 'بيانات التحويل غير مكتملة أو المبلغ غير صالح.'
+        };
+      }
+
+      // محاكاة فشل إذا المبلغ 999 (اختبار)
+      if (Number(amount) === 999) {
+        return {
+          success: false,
+          errorCode: 'INSUFFICIENT_FUNDS',
+          message: 'رصيد الدافع غير كافٍ.'
+        };
+      }
+
+      // محاكاة نجاح التحويل
+      return {
+        success: true,
+        providerRef: `P2P-MOCK-${Date.now()}`,
+        message: `تم تحويل ${amount} من ${senderMobile} إلى ${receiverMobile} بنجاح.`
+      };
+    }
   /**
    * محاكاة تنفيذ عملية الدفع
    * @param {Object} data - بيانات المعاملة

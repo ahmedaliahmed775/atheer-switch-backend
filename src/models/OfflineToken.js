@@ -48,6 +48,12 @@ const OfflineToken = sequelize.define('OfflineToken', {
     allowNull: true,
     comment: 'تاريخ انتهاء صلاحية التوكن'
   }
+  ,
+  publicKey: {
+    type: DataTypes.STRING,
+    allowNull: true,
+    comment: 'المفتاح العام المدعوم عتادياً للمستخدم (Hardware-backed public key)'
+  }
 }, {
   tableName: 'offline_tokens',
   comment: 'جدول تخزين وإدارة التوكنز الأوفلاين'

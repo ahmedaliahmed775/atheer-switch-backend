@@ -45,7 +45,16 @@ class TokenService {
    * @param {string} merchantId - معرف التاجر الطالب للتوكنز
    * @returns {Promise<Array>} - قائمة التوكنز المخصصة
    */
-  async provisionTokens(providerName, customerId, count = 1, merchantId = null) {
+  /**
+   * توزيع التوكنز لعميل محدد مع دعم تخزين المفتاح العام (publicKey)
+   * @param {string} providerName - اسم مزود المحفظة
+   * @param {string} customerId - معرف العميل (رقم الهاتف أو المعرف)
+   * @param {number} count - عدد التوكنز المطلوبة
+   * @param {string} merchantId - معرف التاجر الطالب للتوكنز
+   * @param {string} publicKey - المفتاح العام للجهاز (اختياري)
+   * @returns {Promise<Array>} - قائمة التوكنز المخصصة
+   */
+  async provisionTokens(providerName, customerId, count = 1, merchantId = null, publicKey = null) {
     // البحث عن التوكنز المتاحة للمزود المحدد
     const tokens = await OfflineToken.findAll({
       where: {
@@ -64,13 +73,14 @@ class TokenService {
       throw new Error(`لا توجد توكنز متاحة حالياً للمزود: ${providerName}`);
     }
 
-    // تحديث حالة التوكنز لتصبح محجوزة للعميل
+    // تحديث حالة التوكنز لتصبح محجوزة للعميل وتخزين المفتاح العام إذا توفر
     const provisionedTokens = await Promise.all(
       tokens.map(async (token) => {
         return await token.update({
           status: 'PROVISIONED',
           assignedTo: customerId,
-          merchantId: merchantId
+          merchantId: merchantId,
+          ...(publicKey ? { publicKey } : {})
         });
       })
     );

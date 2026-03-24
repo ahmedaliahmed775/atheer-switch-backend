@@ -6,7 +6,7 @@ import tokenService from '../services/tokenService.js';
  */
 class TokenController {
   /**
-   * معالجة طلب توزيع التوكنز
+   * معالجة طلب توزيع التوكنز مع دعم رفع المفتاح العام (publicKey) من الـ SDK
    * @param {Object} req - طلب الـ HTTP (يتوقع وجود بيانات التاجر من الميدل وير)
    * @param {Object} res - استجابة الـ HTTP
    */
@@ -14,7 +14,7 @@ class TokenController {
     try {
       // فك تغليف البيانات من body.body كما هو مطلوب في المعمارية الجديدة
       const data = req.body.body || req.body;
-      const { providerName, customerId, count } = data;
+      const { providerName, customerId, count, publicKey } = data;
 
       // التحقق من وجود الحقول المطلوبة
       if (!providerName || !customerId) {
@@ -26,12 +26,14 @@ class TokenController {
 
       // استدعاء خدمة التوزيع (تم التحقق من التاجر مسبقاً في الميدل وير)
       const merchantId = req.merchant ? req.merchant.id : null;
-      
+
+      // تمرير publicKey إلى خدمة التوزيع
       const provisionedTokens = await tokenService.provisionTokens(
         providerName,
         customerId,
         parseInt(count) || 1,
-        merchantId
+        merchantId,
+        publicKey
       );
 
       // إرجاع الاستجابة بنجاح
