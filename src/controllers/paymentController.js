@@ -7,7 +7,7 @@ export const processPayment = async (req, res, next) => {
     const { amount, currency, provider, customerMobile, nonce, metadata } = data;
     
     // نستخدم الرقم 888888888 كقيمة ثابتة لضمان تجاوز الـ Validation
-    const merchantId = '888888888'; 
+    const merchantId = req.merchant.id;
 
     const transaction = await Transaction.create({
       merchantId,
