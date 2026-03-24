@@ -5,6 +5,7 @@ import Merchant from '../models/Merchant.js';
  * يقوم بالتحقق من وجود مفتاح API صالح في ترويسات الطلب.
  */
 export const authenticateMerchant = async (req, res, next) => {
+  // التحقق هنا يخص فقط صاحب مفتاح الـ API (merchant)
   const apiKey = req.headers[process.env.API_KEY_HEADER || 'x-atheer-api-key'];
 
   if (!apiKey) {
@@ -24,7 +25,7 @@ export const authenticateMerchant = async (req, res, next) => {
       });
     }
 
-    // إضافة بيانات التاجر للطلب لاستخدامها لاحقاً
+    // هوية المستلم المالي منفصلة وتحدد عبر receiverMobile في جسم الطلب
     req.merchant = merchant;
     next();
   } catch (error) {

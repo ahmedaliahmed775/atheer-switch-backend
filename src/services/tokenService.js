@@ -6,6 +6,37 @@ import { Op } from 'sequelize';
  * تتعامل مع منطق البحث والتوزيع للتوكنز الأوفلاين.
  */
 class TokenService {
+
+    /**
+     * التحقق من التوكن واستخدامه لمرة واحدة
+     * @param {string} tokenValue - قيمة التوكن
+     * @param {string} customerMobile - رقم هاتف الدافع
+     * @returns {Promise<OfflineToken>} - التوكن بعد التحديث
+     * @throws {Error} - في حال فشل التحقق أو انتهاء الصلاحية أو الاستخدام المسبق
+     */
+    async verifyAndUseToken(tokenValue, customerMobile) {
+      // البحث عن التوكن بالحالة PROVISIONED
+      const token = await OfflineToken.findOne({
+        where: {
+          tokenValue,
+          status: 'PROVISIONED'
+        }
+      });
+      if (!token) {
+        throw new Error('التوكن غير صالح أو غير مفعّل');
+      }
+      // التأكد من أن التوكن مخصص لنفس رقم الهاتف
+      if (token.assignedTo !== customerMobile) {
+        throw new Error('رقم الهاتف لا يطابق صاحب التوكن');
+      }
+      // التأكد من عدم انتهاء الصلاحية
+      if (token.expiryDate && new Date(token.expiryDate) < new Date()) {
+        throw new Error('انتهت صلاحية التوكن');
+      }
+      // تحديث حالة التوكن إلى USED
+      await token.update({ status: 'USED' });
+      return token;
+    }
   /**
    * توزيع التوكنز لعميل محدد
    * @param {string} providerName - اسم مزود المحفظة

@@ -10,16 +10,16 @@ class JawaliAdapter {
   async processPayment(data) {
     try {
       // تنظيف الرابط من أي مائلات زائدة
-      const baseUrl = this.apiUrl.replace(/\/+$/, "");
-      const fullUrl = `${baseUrl}/merchant/switch-charge`;
-      
+      const baseUrl = this.apiUrl.replace(/\/+$", "");
+      const fullUrl = `${baseUrl}/wallet/p2p-transfer`;
+
       console.log(`[DEBUG] Calling Wallet URL: ${fullUrl}`);
 
       const payload = {
         amount: data.amount,
-        customerMobile: data.customerMobile,
-        merchantId: this.agentWallet,
-        nonce: `SW-${Date.now()}-${Math.random().toString(36).substring(5)}`
+        senderMobile: data.customerMobile,
+        receiverMobile: data.receiverMobile,
+        nonce: data.nonce || `SW-${Date.now()}-${Math.random().toString(36).substring(5)}`
       };
 
       const response = await axios.post(fullUrl, payload, {
@@ -31,6 +31,7 @@ class JawaliAdapter {
       });
 
       if (response.data && response.data.status === 'ACCEPTED') {
+        // إصدار إشعار SMS للمستلم (إذا كان مدعوماً من المحفظة)
         return { success: true, providerRef: response.data.providerRef, message: 'تمت العملية.' };
       }
       return { success: false, message: response.data.message };

@@ -30,7 +30,7 @@
 
 تستخدم هذه النقطة لمعالجة طلب دفع جديد من Atheer Android SDK.
 
-**ملاحظة هامة:** تتوقع هذه النقطة الآن أن تكون بيانات الطلب الفعلية (مثل `amount`, `provider`, `customerMobile`) متداخلة داخل كائن `body` آخر ضمن جسم الطلب الرئيسي (أي `req.body.body`).
+**ملاحظة هامة:** تتوقع هذه النقطة الآن أن تكون بيانات الطلب الفعلية (مثل `amount`, `provider`, `customerMobile`, `receiverMobile`, `atheerToken`) متداخلة داخل كائن `body` آخر ضمن جسم الطلب الرئيسي (أي `req.body.body`).
 
 **الترويسات المطلوبة:**
 
@@ -46,6 +46,8 @@
     "currency": "YER",
     "provider": "JEEB",
     "customerMobile": "777123456",
+    "receiverMobile": "777654321",
+    "atheerToken": "TOKEN_VALUE_1",
     "nonce": "req_123456789",
     "metadata": {
       "orderId": "ORD-001"
@@ -57,12 +59,14 @@
 | الحقل          | النوع    | مطلوب | الوصف                                                               | مثال                 |
 | :------------- | :------ | :---- | :------------------------------------------------------------------ | :------------------- |
 | `body`         | `object`  | نعم   | كائن يحتوي على بيانات الطلب الفعلية.                               | `{ ... }`            |
-| `body.amount`       | `number`  | نعم   | قيمة المبلغ المراد دفعه.                                           | `100.50`             |
-| `body.currency`     | `string`  | لا    | رمز العملة (افتراضي: `YER`).                                        | `YER`                |
-| `body.provider`     | `string`  | نعم   | مزود خدمة الدفع المستهدف (مثال: `JEEB`, `JAWALI`, `WECASH`, `mock`).       | `JEEB`             |
+| `body.amount`         | `number`  | نعم   | قيمة المبلغ المراد دفعه.                                           | `100.50`             |
+| `body.currency`       | `string`  | لا    | رمز العملة (افتراضي: `YER`).                                        | `YER`                |
+| `body.provider`       | `string`  | نعم   | مزود خدمة الدفع المستهدف (مثال: `JEEB`, `JAWALI`, `WECASH`, `mock`).       | `JEEB`             |
 | `body.customerMobile` | `string`  | نعم   | رقم هاتف العميل الذي يقوم بالدفع.                                   | `777123456`          |
-| `body.nonce`        | `string`  | نعم   | قيمة فريدة للطلب (يمكن إرسالها في الترويسة أو هنا).               | `req_123456789`      |
-| `body.metadata`     | `object`  | لا    | بيانات إضافية اختيارية تتعلق بالمعاملة.                           | `{ "orderId": "ORD-001" }` |
+| `body.receiverMobile` | `string`  | نعم   | رقم هاتف المستلم (إلزامي).                                         | `777654321`          |
+| `body.atheerToken`    | `string`  | نعم   | التوكن المستخدم في العملية (إلزامي).                               | `TOKEN_VALUE_1`      |
+| `body.nonce`          | `string`  | نعم   | قيمة فريدة للطلب (يمكن إرسالها في الترويسة أو هنا).               | `req_123456789`      |
+| `body.metadata`       | `object`  | لا    | بيانات إضافية اختيارية تتعلق بالمعاملة.                           | `{ "orderId": "ORD-001" }` |
 
 **استجابة ناجحة (Success Response - Status 200 OK):**
 

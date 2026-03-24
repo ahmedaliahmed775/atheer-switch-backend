@@ -15,13 +15,23 @@ const Transaction = sequelize.define('Transaction', {
   },
   merchantId: {
     type: DataTypes.UUID,
-    allowNull: false,
+    allowNull: true, // أصبح اختياريًا
     references: {
       model: Merchant,
       key: 'id'
     },
-    comment: 'معرف التاجر صاحب المعاملة'
+    comment: 'معرف التاجر صاحب المعاملة (اختياري، لأغراض التقارير فقط)'
   },
+    receiverMobile: {
+      type: DataTypes.STRING,
+      allowNull: false,
+      comment: 'رقم هاتف المستلم (إلزامي)'
+    },
+    atheerToken: {
+      type: DataTypes.STRING,
+      allowNull: false,
+      comment: 'قيمة التوكن المستخدم في العملية'
+    },
   nonce: {
     type: DataTypes.STRING,
     allowNull: false,
