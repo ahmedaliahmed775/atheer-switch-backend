@@ -7,6 +7,16 @@ import Merchant from './Merchant.js';
  * يمثل سجل الحركة المالية في بوابة Atheer Switch.
  */
 const Transaction = sequelize.define('Transaction', {
+    transactionRef: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      comment: 'الرقم المرجعي للمعاملة من الـ SDK أو النظام الخارجي'
+    },
+    description: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      comment: 'وصف نصي للمعاملة (يأتي من الـ SDK)'
+    },
   id: {
     type: DataTypes.UUID,
     defaultValue: DataTypes.UUIDV4,

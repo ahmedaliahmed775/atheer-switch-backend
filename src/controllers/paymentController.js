@@ -13,7 +13,19 @@ export const processPayment = async (req, res, next) => {
      * amount, receiverAccount, transactionType, atheerToken, signature, timestamp, nonce
      */
     const data = req.body.body || req.body;
-    const { amount, receiverAccount, transactionType, atheerToken, signature, timestamp, nonce } = data;
+    // دعم الحقول الجديدة من SDK
+    const {
+      amount,
+      receiverAccount,
+      transactionType,
+      atheerToken,
+      signature,
+      timestamp,
+      nonce,
+      transactionRef,
+      currency = 'YER',
+      description = ''
+    } = data;
 
     // تحقق من وجود الحقول المطلوبة
     if (!amount || !receiverAccount || !transactionType || !atheerToken || !signature || !timestamp || !nonce) {
@@ -53,16 +65,23 @@ export const processPayment = async (req, res, next) => {
       transactionType,
       customerMobile: senderMobile,
       receiverMobile: receiverAccount,
-      status: 'pending'
+      status: 'pending',
+      transactionRef,
+      currency,
+      description
     });
 
     // تمرير المعاملة إلى خدمة التوجيه (RouterService)
+    // تمرير جميع الحقول إلى خدمة التوجيه
     const result = await routerService.routeTransaction({
       transactionId: transaction.id,
       amount,
       senderMobile,
       receiverAccount,
-      transactionType
+      transactionType,
+      transactionRef,
+      currency,
+      description
     });
 
     if (result.success) {
