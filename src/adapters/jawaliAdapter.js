@@ -1,28 +1,27 @@
 import axios from 'axios';
 
-
-// Jawali Adapter الحقيقي مع توثيق SessionToken
 class JawaliAdapter {
   constructor() {
     this.apiUrl = process.env.JAWALI_API_URL;
     this.merchantAccount = process.env.JAWALI_MERCHANT_ACCOUNT;
-    this.sessionToken = null; // سيتم تحديثه بعد تسجيل الدخول
+    this.sessionToken = null; 
   }
 
-  // تسجيل الدخول لجلب SessionToken (يجب تنفيذها عند بدء التشغيل أو عند انتهاء الجلسة)
+  // 1. تحديث مسار تسجيل الدخول ليتوافق مع المحفظة
   async login() {
-    const loginUrl = `${this.apiUrl.replace(/\/+$/, '')}/api/v1/login`;
+    const loginUrl = `${this.apiUrl.replace(/\/+$/, '')}/api/v1/auth/login`;
     const credentials = {
       username: process.env.JAWALI_USERNAME,
       password: process.env.JAWALI_PASSWORD
     };
     try {
       const response = await axios.post(loginUrl, credentials, { timeout: 10000 });
-      if (response.data && response.data.SessionToken) {
-        this.sessionToken = response.data.SessionToken;
+      // المحفظة تعيد access_token بدلاً من SessionToken
+      if (response.data && response.data.access_token) {
+        this.sessionToken = response.data.access_token;
         return this.sessionToken;
       }
-      throw new Error('فشل تسجيل الدخول لمحفظة جوالي');
+      throw new Error('فشل تسجيل الدخول لمحفظة جوالي: لم يتم استلام التوكن');
     } catch (error) {
       console.error('[Jawali Login Error]', error.message);
       throw error;
@@ -33,45 +32,60 @@ class JawaliAdapter {
     if (!this.sessionToken) {
       await this.login();
     }
-    return this.sessionToken;
   }
 
+  // 2. تحديث مسار وهيكلة الدفع (Nested JSON)
   async processPayment(data) {
     try {
       await this.ensureSessionToken();
       const baseUrl = this.apiUrl.replace(/\/+$/, '');
-      const fullUrl = `${baseUrl}/api/v1/ecommcashout`;
+      // توجيه الطلب للمسار الصحيح في المحفظة
+      const fullUrl = `${baseUrl}/api/v1/merchant/switch-charge`;
 
-      // بناء الـ payload الرسمي
+      // بناء الطلب بالهيكلية المتداخلة التي يتوقعها السيرفر المحاكي (جوالي)
       const payload = {
-        customer_mobile: data.senderMobile, // رقم العميل الدافع
-        merchant_account: this.merchantAccount,
-        amount: data.amount,
-        currency: data.currency || 'YER',
-        reference_number: data.transactionRef || data.nonce || `SW-${Date.now()}`,
-        description: data.description || ''
+        header: {
+          msgId: `MSG-${Date.now()}`,
+          timestamp: new Date().toISOString()
+        },
+        body: {
+          agentWallet: this.merchantAccount, // حساب التاجر/المقسم
+          receiverMobile: data.senderMobile, // العميل الدافع
+          amount: data.amount,
+          password: process.env.JAWALI_PASSWORD, // كلمة المرور مطلوبة في الـ body
+          refId: data.transactionRef || data.nonce || `SW-${Date.now()}`
+        }
       };
 
       const response = await axios.post(fullUrl, payload, {
         headers: {
-          'SessionToken': this.sessionToken,
+          'Authorization': `Bearer ${this.sessionToken}`, // استخدام Bearer Token
           'Content-Type': 'application/json'
         },
         timeout: 10000
       });
 
-      if (response.data && response.data.status === 'SUCCESS') {
-        return { success: true, providerRef: response.data.reference_number, message: 'تمت العملية.' };
+      // 3. فحص الاستجابة بناءً على كود "0000"
+      if (response.data?.header?.responseCode === "0000") {
+        return { 
+          success: true, 
+          providerRef: response.data.body?.txnId || payload.body.refId, 
+          message: 'تمت العملية بنجاح.' 
+        };
       }
-      // إذا انتهت الجلسة، أعد تسجيل الدخول وحاول مرة أخرى لمرة واحدة
-      if (response.data && response.data.errorCode === 'INVALID_SESSION') {
-        await this.login();
-        return this.processPayment(data);
-      }
-      return { success: false, message: response.data.message || 'فشل تنفيذ العملية.' };
+      
+      return { success: false, message: response.data?.body?.message || 'فشل تنفيذ العملية.' };
+      
     } catch (error) {
-      console.error(`[ERROR] Jawali Adapter: ${error.response?.status} - ${JSON.stringify(error.response?.data)}`);
-      return { success: false, errorCode: 'CONNECTION_ERROR', message: 'فشل الاتصال بمحفظة جوالي.' };
+      // إذا كان التوكن منتهي الصلاحية (401)، أعد تسجيل الدخول والمحاولة
+      if (error.response && error.response.status === 401) {
+        console.log('[Jawali Adapter] Token expired. Retrying login...');
+        await this.login();
+        return this.processPayment(data); // محاولة لمرة واحدة إضافية
+      }
+
+      console.error(`[ERROR] Jawali Adapter:`, error.response?.data || error.message);
+      return { success: false, errorCode: 'CONNECTION_ERROR', message: 'فشل الاتصال بمزود المحفظة.' };
     }
   }
 }
