@@ -48,11 +48,12 @@ class JawaliAdapter {
           msgId: `MSG-${Date.now()}`,
           timestamp: new Date().toISOString()
         },
-        body: {
-          agentWallet: this.merchantAccount, // حساب التاجر/المقسم
-          receiverMobile: data.senderMobile, // العميل الدافع
+body: {
+          agentWallet: this.merchantAccount,
+          receiverMobile: data.senderMobile,
           amount: data.amount,
-          password: process.env.JAWALI_PASSWORD, // كلمة المرور مطلوبة في الـ body
+          password: process.env.JAWALI_PASSWORD,
+          accessToken: this.sessionToken, // <--- هذا هو السطر الجديد المطلوب
           refId: data.transactionRef || data.nonce || `SW-${Date.now()}`
         }
       };
