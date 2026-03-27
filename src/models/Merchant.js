@@ -32,6 +32,11 @@ const Merchant = sequelize.define('Merchant', {
     type: DataTypes.STRING,
     allowNull: true,
     comment: 'رابط التنبيهات لإرسال تحديثات المعاملات'
+  },
+  providerWalletId: {
+    type: DataTypes.STRING,
+    allowNull: true,
+    comment: 'معرف محفظة التاجر لدى مزود الخدمة (البنك)'
   }
 }, {
   tableName: 'merchants',

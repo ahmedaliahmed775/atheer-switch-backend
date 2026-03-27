@@ -22,6 +22,9 @@ services:
       - REDIS_PORT=6379
       - REDIS_TLS=false
       - ADMIN_API_KEY=local_dev_admin_key_only_not_for_prod
+      - JEEB_API_URL=http://host.docker.internal:8000/api/v1/jeeb # استخدم host.docker.internal للوصول للخادم المحلي من داخل الحاوية
+      - JEEB_AGENT_WALLET=wallet_id_from_jeeb
+      - JEEB_API_KEY=jeeb_api_key
     depends_on:
       - postgres
       - redis

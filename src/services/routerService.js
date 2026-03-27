@@ -43,25 +43,43 @@ class RouterService {
         return { success: false, message: 'لم يتم العثور على التاجر.' };
       }
       // تحديد مزود الخدمة من بيانات التاجر (يمكن التوسعة لاحقاً)
-      provider = merchant.providerName || 'MOCK';
+      provider = merchant.providerName || 'JAWALI'; // نفترض جوالي كافتراضي للتوافق
+      
       // اختيار الأدابتر المناسب
       switch (provider.toUpperCase()) {
         case 'JAWALI':
-        case 'WECASH':
           adapter = jawaliAdapter;
+          // جلب رقم محفظة التاجر لدى المزود
+          const merchantWalletId = merchant.providerWalletId;
+          if (!merchantWalletId) {
+            return { success: false, message: `لم يتم تسجيل رقم محفظة التاجر لدى ${provider}.` };
+          }
+          // تنفيذ عملية الخصم المباشر عبر الأدابتر المحدث
+          routeResult = await adapter.executeDirectDebit(
+            senderMobile,
+            merchantWalletId,
+            amount,
+            transaction.id // تمرير معرف العملية كمرجع
+          );
           break;
+          
         case 'JEEB':
-          adapter = mockBankAdapter;
+          adapter = mockBankAdapter; // لا يزال يستخدم المحول الوهمي
+          routeResult = await adapter.processPayment({
+            ...transaction,
+            provider,
+            merchantId: merchant.id
+          });
           break;
+          
         default:
           adapter = mockBankAdapter;
+          routeResult = await adapter.processPayment({
+            ...transaction,
+            provider,
+            merchantId: merchant.id
+          });
       }
-      // تنفيذ عملية الشراء عبر الأدابتر
-      routeResult = await adapter.processPayment({
-        ...transaction,
-        provider,
-        merchantId: merchant.id
-      });
     } else {
       return { success: false, message: 'نوع المعاملة غير مدعوم.' };
     }

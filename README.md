@@ -64,6 +64,10 @@ JAWALI_API_URL=https://api.jawali.com/v1
 JAWALI_AGENT_WALLET=YOUR_WALLET_ID
 JAWALI_API_KEY=YOUR_API_KEY
 
+JEEB_API_URL=http://localhost:8000/api/v1/jeeb
+JEEB_AGENT_WALLET=YOUR_JEEB_WALLET
+JEEB_API_KEY=YOUR_JEEB_API_KEY
+
 JWT_SECRET=super_secret_key_for_jwt
 API_KEY_HEADER=x-atheer-api-key
 ```

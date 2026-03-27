@@ -1,92 +1,127 @@
 import axios from 'axios';
+import { v4 as uuidv4 } from 'uuid';
 
+/**
+ * محول بنك جوالي (Jawali Bank Adapter)
+ * يتصل مع سيرفر البنك الوهمي الذي يحاكي محفظة جوالي.
+ * تم تحديثه ليعتمد على مسار B2B Direct Debit الخاص بالبوابات الموثوقة.
+ */
 class JawaliAdapter {
   constructor() {
-    this.apiUrl = process.env.JAWALI_API_URL;
-    this.merchantAccount = process.env.JAWALI_MERCHANT_ACCOUNT;
-    this.sessionToken = null; 
+    this.apiUrl = process.env.JAWALI_API_URL || 'http://localhost:3001';
+    this.callerId = 'AtheerSwitch'; // معرف المتصل (السويتش)
+    this.accessToken = null; // توكن المصادقة الخاص بالسويتش مع البنك
   }
 
-  // 1. تحديث مسار تسجيل الدخول ليتوافق مع المحفظة
-  async login() {
-    const loginUrl = `${this.apiUrl.replace(/\/+$/, '')}/api/v1/auth/login`;
-    const credentials = {
-      username: process.env.JAWALI_USERNAME,
-      password: process.env.JAWALI_PASSWORD
+  /**
+   * دالة مساعدة لبناء هيكل الطلب المكون من header و body.
+   * @param {object} bodyData - البيانات التي سيتم إرسالها في الـ body.
+   * @returns {object} - الطلب الجاهز للإرسال.
+   */
+  buildPayload(bodyData) {
+    return {
+      header: {
+        messageContext: this.callerId,
+        messageId: uuidv4(),
+        messageTimestamp: new Date().toISOString(),
+        callerId: this.callerId,
+      },
+      body: bodyData,
     };
+  }
+
+  /**
+   * تسجيل دخول السويتش إلى نظام البنك للحصول على توكن.
+   */
+  async login() {
+    const loginUrl = `${this.apiUrl}/api/v1/auth/trusted-gateway-login`;
+    const payload = this.buildPayload({
+      gatewayId: process.env.JAWALI_GATEWAY_ID,
+      gatewaySecret: process.env.JAWALI_GATEWAY_SECRET,
+    });
+
     try {
-      const response = await axios.post(loginUrl, credentials, { timeout: 10000 });
-      // المحفظة تعيد access_token بدلاً من SessionToken
-      if (response.data && response.data.access_token) {
-        this.sessionToken = response.data.access_token;
-        return this.sessionToken;
+      const response = await axios.post(loginUrl, payload, { timeout: 15000 });
+      if (response.data?.body?.access_token) {
+        this.accessToken = response.data.body.access_token;
+        console.log('[Jawali Adapter] Login successful. Token obtained.');
+        return this.accessToken;
       }
-      throw new Error('فشل تسجيل الدخول لمحفظة جوالي: لم يتم استلام التوكن');
+      throw new Error('Jawali Login Failed: Token not received.');
     } catch (error) {
-      console.error('[Jawali Login Error]', error.message);
-      throw error;
+      console.error('[Jawali Login Error]', error.response?.data || error.message);
+      throw new Error('Could not authenticate with Jawali Bank.');
     }
   }
 
-  async ensureSessionToken() {
-    if (!this.sessionToken) {
+  /**
+   * يضمن أن السويتش لديه توكن صالح قبل إرسال أي طلب.
+   */
+  async ensureAccessToken() {
+    // ملاحظة: في بيئة حقيقية، يجب التحقق من صلاحية التوكن قبل إعادة استخدامه.
+    // هنا، للتبسيط، سنسجل الدخول مرة واحدة فقط.
+    if (!this.accessToken) {
       await this.login();
     }
   }
 
-  // 2. تحديث مسار وهيكلة الدفع (Nested JSON)
-  async processPayment(data) {
+  /**
+   * تنفيذ عملية خصم مباشر من حساب العميل إلى حساب التاجر.
+   * @param {string} customerPhone - رقم هاتف العميل صاحب الحساب.
+   * @param {string} merchantWalletId - رقم محفظة التاجر المستفيد.
+   * @param {number} amount - المبلغ المطلوب خصمه.
+   * @param {string} transactionRef - الرقم المرجعي للعملية.
+   * @returns {Promise<object>} - نتيجة العملية.
+   */
+  async executeDirectDebit(customerPhone, merchantWalletId, amount, transactionRef) {
+    await this.ensureAccessToken();
+
+    const debitUrl = `${this.apiUrl}/api/v1/b2b/direct-debit`;
+    const payload = this.buildPayload({
+      customerIdentifier: customerPhone, // يتم فك تشفيره والتحقق منه داخل السويتش
+      targetWalletId: merchantWalletId,
+      amount: amount,
+      transactionRef: transactionRef || uuidv4(),
+      description: `Payment via Atheer Switch for transaction ${transactionRef}`,
+    });
+
     try {
-      await this.ensureSessionToken();
-      const baseUrl = this.apiUrl.replace(/\/+$/, '');
-      // توجيه الطلب للمسار الصحيح في المحفظة
-      const fullUrl = `${baseUrl}/api/v1/merchant/switch-charge`;
-
-      // بناء الطلب بالهيكلية المتداخلة التي يتوقعها السيرفر المحاكي (جوالي)
-      const payload = {
-        header: {
-          msgId: `MSG-${Date.now()}`,
-          timestamp: new Date().toISOString()
-        },
-body: {
-          agentWallet: this.merchantAccount,
-          receiverMobile: data.senderMobile,
-          amount: data.amount,
-          password: process.env.JAWALI_PASSWORD,
-          accessToken: this.sessionToken, // <--- هذا هو السطر الجديد المطلوب
-          refId: data.transactionRef || data.nonce || `SW-${Date.now()}`
-        }
-      };
-
-      const response = await axios.post(fullUrl, payload, {
+      const response = await axios.post(debitUrl, payload, {
         headers: {
-          'Authorization': `Bearer ${this.sessionToken}`, // استخدام Bearer Token
-          'Content-Type': 'application/json'
+          'Authorization': `Bearer ${this.accessToken}`,
+          'Content-Type': 'application/json',
         },
-        timeout: 10000
+        timeout: 20000,
       });
 
-      // 3. فحص الاستجابة بناءً على كود "0000"
-      if (response.data?.header?.responseCode === "0000") {
-        return { 
-          success: true, 
-          providerRef: response.data.body?.txnId || payload.body.refId, 
-          message: 'تمت العملية بنجاح.' 
+      // التحقق من نجاح العملية بناءً على استجابة البنك
+      if (response.data?.body?.status === 'SUCCESS') {
+        return {
+          success: true,
+          providerRef: response.data.body.transactionId,
+          message: response.data.body.message || 'Direct debit executed successfully.',
+        };
+      } else {
+        return {
+          success: false,
+          message: response.data?.body?.message || 'Direct debit failed at the bank.',
+          providerError: response.data?.body?.errorCode,
         };
       }
-      
-      return { success: false, message: response.data?.body?.message || 'فشل تنفيذ العملية.' };
-      
     } catch (error) {
-      // إذا كان التوكن منتهي الصلاحية (401)، أعد تسجيل الدخول والمحاولة
+      // التعامل مع أخطاء الشبكة أو انتهاء صلاحية التوكن
       if (error.response && error.response.status === 401) {
-        console.log('[Jawali Adapter] Token expired. Retrying login...');
-        await this.login();
-        return this.processPayment(data); // محاولة لمرة واحدة إضافية
+        console.log('[Jawali Adapter] Access token expired or invalid. Re-authenticating...');
+        this.accessToken = null; // إجبار إعادة تسجيل الدخول
+        return this.executeDirectDebit(customerPhone, merchantWalletId, amount, transactionRef);
       }
 
-      console.error(`[ERROR] Jawali Adapter:`, error.response?.data || error.message);
-      return { success: false, errorCode: 'CONNECTION_ERROR', message: 'فشل الاتصال بمزود المحفظة.' };
+      console.error('[Jawali Direct Debit Error]', error.response?.data || error.message);
+      return {
+        success: false,
+        errorCode: 'PROVIDER_CONNECTION_ERROR',
+        message: 'Failed to connect to the payment provider.',
+      };
     }
   }
 }
