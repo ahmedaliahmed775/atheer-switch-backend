@@ -2,23 +2,23 @@
 
 ## مقدمة
 
-يقدم هذا المستند توثيقًا شاملاً لواجهة برمجة التطبيقات (API) الخاصة ببوابة الدفع عالية الأداء Atheer Switch. تهدف هذه الواجهة إلى تمكين تطبيقات الأندرويد (عبر Atheer Android SDK) من إرسال طلبات الدفع ومعالجتها بشكل آمن وفعال. تقوم Atheer Switch بدور الوسيط المالي، حيث تتحقق من صحة الطلبات، وتمنع تكرار الإنفاق، وتوجه المعاملات إلى مزودي خدمات الدفع المختلفين مثل Jawali و WeCash، بالإضافة إلى إدارة وتوزيع التوكنز الأوفلاين.
+يقدم هذا المستند توثيقًا شاملاً لواجهة برمجة التطبيقات (API) الخاصة ببوابة الدفع عالية الأداء Atheer Switch. تعتمد هذه الواجهة على **محرك التحقق عديم الحالة (Stateless Anti-Replay Verification Engine)**، الذي يُلغي تمامًا نموذج التوكنز الأوفلاين القديم ويستبدله بنظام تحقق آمن يعتمد على Redis لمنع هجمات إعادة التشغيل وتوقيع Ed25519 للتحقق من هوية الجهاز.
 
 ## هندسة الربط مع البنوك (B2B Direct Debit)
 
-نظراً لأن Atheer Switch مصمم للعمل في بيئات ذات اتصال متقطع بالإنترنت (Offline-first)، فإن نظام قسائم الخصم (Vouchers) الذي يعتمد على تفاعل العميل المباشر مع البنك لحظة الدفع لا يعتبر حلاً عملياً.
-
-لذلك، تم اعتماد معمارية **الخصم المباشر بين الشركات (B2B Direct Debit)**، حيث يعمل السويتش كـ **بوابة دفع سيادية وموثوقة (Trusted Gateway)** لدى البنك.
+تعتمد Atheer Switch على معمارية **الخصم المباشر بين الشركات (B2B Direct Debit)**، حيث يعمل السويتش كـ **بوابة دفع سيادية وموثوقة (Trusted Gateway)** لدى البنك.
 
 ### آلية العمل:
 
-1.  **المصادقة المسبقة**: يقوم السويتش بتسجيل الدخول إلى واجهة برمجة تطبيقات خاصة بالبوابات الموثوقة لدى البنك، ويحصل على توكن مصادقة (Access Token) يثبت هويته.
-2.  **الخصم المباشر**: عند استلام طلب دفع من العميل، يقوم السويتش بفك تشفير بيانات العميل (مثل البصمة البيومترية) والتحقق منها داخلياً. بعد ذلك، يرسل السويتش أمراً بالخصم المباشر إلى البنك عبر مسار `b2b/direct-debit`، محدداً حساب العميل الذي سيتم الخصم منه ومحفظة التاجر التي ستستقبل الأموال.
-3.  **تجاوز نظام القسائم**: هذه الآلية تتجاوز تماماً حاجة العميل لتوليد قسيمة خصم (Voucher) يدوياً، حيث أن السويتش مفوض بالخصم مباشرة نيابة عن العميل بعد التحقق من صحة المعاملة.
+1. **التحقق من مكافحة إعادة التشغيل (Anti-Replay)**: يفحص السويتش عداد الجهاز (Counter) في Redis بشكل ذري. أي طلب بعداد مكرر أو قديم يُرفض فوراً بـ HTTP 403.
+2. **إعادة بناء LUK**: يشتق السويتش مفتاح الاستخدام المحدود (LUK) باستخدام HMAC-SHA256 من seed الجهاز والعداد.
+3. **التحقق من التوقيع**: يتحقق السويتش من توقيع Ed25519 على الحِمل `DeviceID|Counter|Challenge` باستخدام المفتاح العام المشتق من LUK.
+4. **الخصم المباشر**: بعد التحقق، يرسل السويتش أمر خصم مباشر إلى البنك عبر `jawaliAdapter`، محدداً حساب الجهاز ومحفظة التاجر.
+5. **التدقيق الدائم**: تُسجَّل جميع المعاملات (الناجحة والفاشلة أمنياً) في PostgreSQL للتدقيق الدائم (Immutable Audit Log).
 
 ### هيكل الطلبات (Request Structure)
 
-تعتمد جميع الطلبات المرسلة من السويتش إلى البنك على هيكل موحد يتكون من `header` و `body` لضمان السياق وتتبع الرسائل.
+تعتمد الطلبات من السويتش إلى البنك على هيكل موحد يتكون من `header` و `body`.
 
 **مثال على هيكل الطلب:**
 
@@ -27,11 +27,11 @@
   "header": {
     "messageContext": "AtheerSwitch",
     "messageId": "a7e1a3b4-4c5d-4f6e-8a9b-1c2d3e4f5a6b",
-    "messageTimestamp": "2026-03-28T12:00:00.000Z",
+    "messageTimestamp": "2026-04-07T12:00:00.000Z",
     "callerId": "AtheerSwitch"
   },
   "body": {
-    "customerIdentifier": "777123456",
+    "customerIdentifier": "DEVICE-001",
     "targetWalletId": "ACC-MERCHANT-001",
     "amount": 1500,
     "transactionRef": "ATHEER-TXN-98765"
@@ -39,76 +39,55 @@
 }
 ```
 
--   **Header**: يحتوي على بيانات وصفية للرسالة (Metadata) مثل معرف الرسالة، والطابع الزمني، وهوية المتصل.
--   **Body**: يحتوي على بيانات العملية الفعلية مثل تفاصيل الخصم والمبلغ.
-
-هذه المعمارية تضمن أماناً وكفاءة عالية مع الحفاظ على تجربة مستخدم سلسة في سيناريوهات الدفع الأوفلاين.
-
 ## المصادقة (Authentication)
 
-تتطلب جميع نقاط النهاية (Endpoints) المصادقة باستخدام مفتاح API خاص بالتاجر (Merchant API Key). يجب إرسال هذا المفتاح في ترويسة الطلب (Header) تحت اسم `x-atheer-api-key`.
+تتطلب جميع نقاط النهاية المصادقة باستخدام مفتاح API خاص بالتاجر.
 
 | الترويسة (Header)   | الوصف                                 | مثال                                    |
 | :----------------- | :------------------------------------ | :--------------------------------------- |
 | `x-atheer-api-key` | مفتاح API الخاص بالتاجر للمصادقة.     | `x-atheer-api-key: your_merchant_api_key` |
 
-## منع تكرار الطلبات (Idempotency)
-
-لضمان معالجة كل طلب دفع مرة واحدة فقط، تدعم Atheer Switch مفهوم منع تكرار الطلبات (Idempotency) باستخدام قيمة `nonce` فريدة. يجب إرسال هذه القيمة في ترويسة الطلب `x-atheer-nonce` أو ضمن جسم الطلب (Body) لكل طلب دفع جديد.
-
-إذا تم استلام طلب بنفس قيمة `nonce` مرة أخرى خلال فترة صلاحية (24 ساعة)، فسيتم إرجاع نتيجة الطلب الأصلي دون إعادة معالجته.
-
-| الترويسة (Header) | الوصف                                        | مثال                                  |
-| :---------------- | :------------------------------------------- | :------------------------------------- |
-| `x-atheer-nonce`  | قيمة فريدة لكل طلب لمنع تكرار المعالجة. | `x-atheer-nonce: unique_request_id_123` |
-
 ## نقاط النهاية (Endpoints)
 
-### 1. معالجة طلب دفع جديد
+### 1. معالجة طلب دفع — نظام Anti-Replay
 
-`POST /api/v1/payments/process`
+`POST /api/v1/payments/charge`
 
-تستخدم هذه النقطة لمعالجة طلب دفع جديد من Atheer Android SDK.
-
-**ملاحظة هامة:** تتوقع هذه النقطة الآن أن تكون بيانات الطلب الفعلية (مثل `amount`, `provider`, `customerMobile`, `receiverMobile`, `atheerToken`) متداخلة داخل كائن `body` آخر ضمن جسم الطلب الرئيسي (أي `req.body.body`).
+تستخدم هذه النقطة لمعالجة طلب دفع جديد من Atheer Android SDK باستخدام محرك التحقق عديم الحالة.
 
 **الترويسات المطلوبة:**
 
 - `x-atheer-api-key`: مفتاح API الخاص بالتاجر.
-- `x-atheer-nonce`: قيمة فريدة للطلب.
 
 **جسم الطلب (Request Body):**
 
 ```json
 {
-  "body": {
-    "amount": 100.50,
-    "currency": "YER",
-    "provider": "JEEB",
-    "customerMobile": "777123456",
-    "receiverMobile": "777654321",
-    "atheerToken": "TOKEN_VALUE_1",
-    "nonce": "req_123456789",
-    "metadata": {
-      "orderId": "ORD-001"
-    }
-  }
+  "DeviceID": "DEVICE-UNIQUE-ID-001",
+  "Counter": 42,
+  "Challenge": "ch_a1b2c3d4e5f6",
+  "Signature": "BASE64_ED25519_SIGNATURE_HERE",
+  "amount": 1500.00,
+  "receiverAccount": "uuid-of-merchant-or-mobile",
+  "transactionType": "P2M",
+  "currency": "YER",
+  "description": "شراء من متجر XYZ"
 }
 ```
 
-| الحقل          | النوع    | مطلوب | الوصف                                                               | مثال                 |
-| :------------- | :------ | :---- | :------------------------------------------------------------------ | :------------------- |
-| `body`         | `object`  | نعم   | كائن يحتوي على بيانات الطلب الفعلية.                               | `{ ... }`            |
-| `body.amount`         | `number`  | نعم   | قيمة المبلغ المراد دفعه.                                           | `100.50`             |
-| `body.currency`       | `string`  | لا    | رمز العملة (افتراضي: `YER`).                                        | `YER`                |
-| `body.provider`       | `string`  | نعم   | مزود خدمة الدفع المستهدف (مثال: `JEEB`, `JAWALI`, `WECASH`, `mock`).       | `JEEB`             |
-| `body.customerMobile` | `string`  | نعم   | رقم هاتف العميل الذي يقوم بالدفع.                                   | `777123456`          |
-| `body.receiverMobile` | `string`  | نعم   | رقم هاتف المستلم (إلزامي).                                         | `777654321`          |
-| `body.atheerToken`    | `string`  | نعم   | التوكن المستخدم في العملية (إلزامي).                               | `TOKEN_VALUE_1`      |
-| `body.nonce`          | `string`  | نعم   | قيمة فريدة للطلب (يمكن إرسالها في الترويسة أو هنا).               | `req_123456789`      |
-| `body.metadata`       | `object`  | لا    | بيانات إضافية اختيارية تتعلق بالمعاملة.                           | `{ "orderId": "ORD-001" }` |
+| الحقل              | النوع     | مطلوب | الوصف                                                                                  |
+| :----------------- | :-------- | :---- | :------------------------------------------------------------------------------------- |
+| `DeviceID`         | `string`  | نعم   | معرف الجهاز الفريد المسجَّل في SDK.                                                   |
+| `Counter`          | `integer` | نعم   | عداد المعاملة المتصاعد (Monotonic Counter) — يُرفض إذا كان ≤ آخر عداد مسجَّل.        |
+| `Challenge`        | `string`  | نعم   | تحدٍّ فريد للمعاملة يُولَّده SDK (nonce أحادي الاستخدام).                              |
+| `Signature`        | `string`  | نعم   | توقيع Ed25519 بتشفير Base64 على الحِمل `DeviceID\|Counter\|Challenge`.                |
+| `amount`           | `number`  | نعم   | قيمة المبلغ المراد دفعه.                                                               |
+| `receiverAccount`  | `string`  | نعم   | معرف التاجر (UUID) في حالة P2M، أو رقم الجوال في حالة P2P.                            |
+| `transactionType`  | `string`  | نعم   | نوع المعاملة: `P2M` (دفع لتاجر) أو `P2P` (تحويل بين أفراد).                          |
+| `currency`         | `string`  | لا    | رمز العملة (افتراضي: `YER`).                                                           |
+| `description`      | `string`  | لا    | وصف نصي اختياري للمعاملة.                                                              |
 
-**استجابة ناجحة (Success Response - Status 200 OK):**
+**استجابة ناجحة (Status 200 OK):**
 
 ```json
 {
@@ -116,105 +95,49 @@
   "data": {
     "transactionId": "uuid-of-transaction",
     "status": "success",
-    "providerRef": "reference-from-provider",
-    "message": "تمت عملية الدفع بنجاح."
+    "providerRef": "JAWALI-TXN-REF-001"
   }
 }
 ```
 
-**استجابة مكررة (Idempotency Response - Status 200 OK):**
-
-```json
-{
-  "success": true,
-  "isDuplicate": true,
-  "message": "تمت معالجة هذا الطلب مسبقاً.",
-  "data": {
-    "transactionId": "uuid-of-previous-transaction",
-    "status": "success",
-    "providerRef": "reference-from-provider",
-    "message": "تمت عملية الدفع بنجاح."
-  }
-}
-```
-
-**استجابة خطأ (Error Response - Status 400 Bad Request / 500 Internal Server Error):**
+**استجابة هجوم إعادة التشغيل (Status 403 Forbidden):**
 
 ```json
 {
   "success": false,
   "error": {
-    "code": "ERROR_CODE",
-    "message": "رسالة خطأ توضيحية باللغة العربية.",
-    "timestamp": "2026-03-21T10:30:00.000Z"
+    "message": "Replay Attack Detected"
   }
 }
 ```
 
-### 2. طلب تخصيص توكنز أوفلاين
-
-`POST /api/v1/payments/tokens/provision`
-
-تستخدم هذه النقطة لطلب تخصيص توكنز أوفلاين من Atheer Switch لعميل معين ومزود محدد. يتم استخدام هذه التوكنز لاحقًا في عمليات الدفع الأوفلاين.
-
-**الترويسات المطلوبة:**
-
-- `x-atheer-api-key`: مفتاح API الخاص بالتاجر.
-
-**جسم الطلب (Request Body):**
+**استجابة فشل التوقيع (Status 401 Unauthorized):**
 
 ```json
 {
-  "body": {
-    "providerName": "JEEB",
-    "customerId": "777123456",
-    "count": 1
+  "success": false,
+  "error": {
+    "message": "فشل التحقق من التوقيع الرقمي."
   }
 }
 ```
 
-| الحقل          | النوع    | مطلوب | الوصف                                                               | مثال                 |
-| :------------- | :------ | :---- | :------------------------------------------------------------------ | :------------------- |
-| `body`         | `object`  | نعم   | كائن يحتوي على بيانات طلب التوكنز.                                | `{ ... }`            |
-| `body.providerName` | `string`  | نعم   | اسم مزود المحفظة المطلوب (مثال: `JEEB`, `JAWALI`).                 | `JEEB`               |
-| `body.customerId`   | `string`  | نعم   | معرف العميل الذي سيتم تخصيص التوكنز له (عادة رقم الهاتف).         | `777123456`          |
-| `body.count`        | `number`  | لا    | عدد التوكنز المطلوب تخصيصها (افتراضي: 1).                          | `1`                  |
-
-**استجابة ناجحة (Success Response - Status 200 OK):**
+**استجابة خطأ عام (Status 400 / 500):**
 
 ```json
 {
-  "status": "success",
-  "message": "تم تخصيص 1 توكنز بنجاح لمزود JEEB",
-  "data": {
-    "tokens": [
-      {
-        "id": "uuid-of-token-1",
-        "tokenValue": "TOKEN_VALUE_1",
-        "providerName": "JEEB",
-        "expiryDate": "2027-03-21T10:00:00.000Z"
-      }
-    ],
-    "customerId": "777123456",
-    "provider": "JEEB"
+  "success": false,
+  "error": {
+    "message": "رسالة خطأ توضيحية."
   }
 }
 ```
 
-**استجابة خطأ (Error Response - Status 400 Bad Request / 500 Internal Server Error):**
+---
 
-```json
-{
-  "status": "error",
-  "message": "لا توجد توكنز متاحة حالياً للمزود: JEEB"
-}
-```
-
-### 3. الحصول على حالة معاملة
+### 2. الحصول على حالة معاملة
 
 `GET /api/v1/payments/status/:id`
-
-تستخدم هذه النقطة للاستعلام عن حالة معاملة معينة باستخدام معرف المعاملة.
 
 **الترويسات المطلوبة:**
 
@@ -226,60 +149,52 @@
 | :------ | :----- | :---------------------- | :------------------- |
 | `id`    | `string` | معرف المعاملة (UUID). | `uuid-of-transaction` |
 
-**استجابة ناجحة (Success Response - Status 200 OK):**
+**استجابة ناجحة (Status 200 OK):**
 
 ```json
 {
   "success": true,
   "data": {
     "id": "uuid-of-transaction",
-    "merchantId": "uuid-of-merchant",
-    "nonce": "unique_request_id_123",
-    "amount": "100.50",
+    "amount": "1500.00",
     "currency": "YER",
-    "provider": "JEEB",
-    "providerRef": "reference-from-provider",
+    "provider": "JAWALI",
+    "providerRef": "JAWALI-TXN-REF-001",
     "status": "success",
-    "customerMobile": "777123456",
-    "errorCode": null,
-    "errorMessage": null,
-    "metadata": { "orderId": "ORD-001" },
-    "createdAt": "2026-03-21T10:00:00.000Z",
-    "updatedAt": "2026-03-21T10:05:00.000Z"
+    "authMethod": "ED25519_ANTI_REPLAY",
+    "transactionType": "P2M",
+    "metadata": {
+      "deviceId": "DEVICE-UNIQUE-ID-001",
+      "counter": 42,
+      "challenge": "ch_a1b2c3d4e5f6"
+    },
+    "createdAt": "2026-04-07T12:00:00.000Z",
+    "updatedAt": "2026-04-07T12:00:05.000Z"
   }
 }
 ```
 
-**استجابة خطأ (Error Response - Status 404 Not Found):**
+---
 
-```json
-{
-  "success": false,
-  "message": "المعاملة غير موجودة."
-}
-```
-
-### 4. الحصول على إحصائيات مزود خدمة
+### 3. الحصول على إحصائيات مزود خدمة
 
 `GET /api/v1/admin/stats/:provider`
 
-تستخدم هذه النقطة للحصول على إحصائيات لحظية لمزود خدمة دفع معين.
-
-**ملاحظة:** هذه النقطة مخصصة للاستخدام الإداري ويجب حمايتها بشكل مناسب في بيئة الإنتاج.
+**ملاحظة:** هذه النقطة مخصصة للاستخدام الإداري وتتطلب مفتاح `x-atheer-admin-key`.
 
 **معلمات المسار (Path Parameters):**
 
-| المعلمة    | النوع   | الوصف                               | مثال    |
-| :--------- | :----- | :---------------------------------- | :------ |
-| `provider` | `string` | اسم مزود الخدمة (مثال: `JEEB`). | `JEEB` |
+| المعلمة    | النوع   | الوصف                               | مثال     |
+| :--------- | :----- | :---------------------------------- | :------- |
+| `provider` | `string` | اسم مزود الخدمة (مثال: `JAWALI`). | `JAWALI` |
 
-**استجابة ناجحة (Success Response - Status 200 OK):**
+**استجابة ناجحة (Status 200 OK):**
 
 ```json
 {
   "success": true,
   "data": {
-    "provider": "JEEB",
+    "provider": "JAWALI",
     "totalCount": 1500,
     "successCount": 1450,
     "failedCount": 50,
@@ -290,22 +205,18 @@
 }
 ```
 
-### 5. الحصول على إحصائيات جميع مزودي الخدمة
+### 4. الحصول على إحصائيات جميع مزودي الخدمة
 
 `GET /api/v1/admin/stats/all`
 
-تستخدم هذه النقطة للحصول على إحصائيات لحظية لجميع مزودي خدمة الدفع المدعومين.
-
-**ملاحظة:** هذه النقطة مخصصة للاستخدام الإداري ويجب حمايتها بشكل مناسب في بيئة الإنتاج.
-
-**استجابة ناجحة (Success Response - Status 200 OK):**
+**استجابة ناجحة (Status 200 OK):**
 
 ```json
 {
   "success": true,
   "data": [
     {
-      "provider": "JEEB",
+      "provider": "JAWALI",
       "totalCount": 1500,
       "successCount": 1450,
       "failedCount": 50,
@@ -314,16 +225,7 @@
       "successRate": "96.67%"
     },
     {
-      "provider": "JAWALI",
-      "totalCount": 800,
-      "successCount": 780,
-      "failedCount": 20,
-      "totalVolume": 80000.00,
-      "dailyVolume": 2500.00,
-      "successRate": "97.50%"
-    },
-    {
-      "provider": "WECASH",
+      "provider": "MOCK",
       "totalCount": 800,
       "successCount": 780,
       "failedCount": 20,
@@ -334,3 +236,4 @@
   ]
 }
 ```
+

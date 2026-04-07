@@ -1,94 +1,140 @@
+import crypto from 'crypto';
 import Transaction from '../models/Transaction.js';
 import routerService from '../services/routerService.js';
+import { reconstructLUK, verifyEd25519Signature } from '../utils/cryptoUtils.js';
 
-// أدوات التشفير للتحقق من التوقيع البيومتري
-import { verifyBiometricSignature } from '../utils/cryptoUtils.js';
-import OfflineToken from '../models/OfflineToken.js';
-
-export const processPayment = async (req, res, next) => {
+/**
+ * محرك التحقق عديم الحالة (Stateless Anti-Replay Verification Engine)
+ *
+ * تدفق المعالجة:
+ * 1. يُستقبَل الحِمل: DeviceID | Counter | Challenge | Signature + بيانات الدفع
+ * 2. يتحقق antiReplay middleware من العداد مسبقاً (HTTP 403 إذا أُعيد الاستخدام)
+ * 3. يُشتَق seed الجهاز: HMAC-SHA256(DEVICE_MASTER_SEED, DeviceID)
+ * 4. يُعاد بناء LUK:    HMAC-SHA256(deviceSeed, Counter)
+ * 5. يُتحقَق من توقيع Ed25519 على الحِمل: DeviceID|Counter|Challenge
+ * 6. تُوجَّه المعاملة إلى jawaliAdapter (P2M) أو mockBankAdapter (P2P)
+ * 7. تُسجَّل حالة المعاملة النهائية في PostgreSQL للتدقيق الدائم
+ */
+export const chargePayment = async (req, res, next) => {
   try {
-    /**
-     * 🚦 منطق معالجة الدفع بنموذج التوقيع البيومتري (Biometric Cryptogram)
-     * يقبل فقط الحقول الأساسية من SDK:
-     * amount, receiverAccount, transactionType, atheerToken, signature, timestamp, nonce
-     */
     const data = req.body.body || req.body;
-    // دعم الحقول الجديدة من SDK
     const {
+      DeviceID,
+      Counter,
+      Challenge,
+      Signature,
       amount,
       receiverAccount,
       transactionType,
-      atheerToken,
-      signature,
-      timestamp,
-      nonce,
-      transactionRef,
       currency = 'YER',
       description = ''
     } = data;
 
-    // تحقق من وجود الحقول المطلوبة
-    if (!amount || !receiverAccount || !transactionType || !atheerToken || !signature || !timestamp || !nonce) {
-      return res.status(400).json({ success: false, error: { message: 'الحقول الأساسية مطلوبة: amount, receiverAccount, transactionType, atheerToken, signature, timestamp, nonce' } });
+    // التحقق من الحقول الأساسية
+    if (!DeviceID || Counter === undefined || !Challenge || !Signature || !amount || !receiverAccount || !transactionType) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          message: 'الحقول الأساسية مطلوبة: DeviceID, Counter, Challenge, Signature, amount, receiverAccount, transactionType'
+        }
+      });
     }
 
-    // جلب التوكن للتحقق من المفتاح العام
-    const tokenRecord = await OfflineToken.findOne({ where: { tokenValue: atheerToken } });
-    if (!tokenRecord || !tokenRecord.publicKey) {
-      return res.status(401).json({ success: false, error: { message: 'توكن غير صالح أو المفتاح العام غير مسجل.' } });
+    const masterSeed = process.env.DEVICE_MASTER_SEED;
+    if (!masterSeed) {
+      console.error('❌ DEVICE_MASTER_SEED غير محدد في المتغيرات البيئية.');
+      return res.status(500).json({ success: false, error: { message: 'خطأ في إعداد الخادم.' } });
     }
 
-    // التحقق من التوقيع الرقمي باستخدام المفتاح العام
-    const isValid = verifyBiometricSignature({
-      publicKey: tokenRecord.publicKey,
-      signature,
-      atheerToken,
-      timestamp
+    // اشتقاق seed الجهاز الفريد من الـ seed الرئيسي ومعرف الجهاز
+    const deviceSeedHmac = crypto.createHmac('sha256', Buffer.from(masterSeed, 'hex'));
+    deviceSeedHmac.update(DeviceID);
+    const deviceSeed = deviceSeedHmac.digest();
+
+    // إعادة بناء LUK (مفتاح الاستخدام المحدود)
+    const luk = reconstructLUK(deviceSeed, Counter);
+    if (!luk) {
+      return res.status(500).json({ success: false, error: { message: 'فشل إعادة بناء مفتاح LUK.' } });
+    }
+
+    // تحديد مزود الخدمة بناءً على نوع المعاملة
+    const provider = transactionType === 'P2P' ? 'MOCK' : 'JAWALI';
+    // معرف المعاملة الفريد: DeviceID + Counter (مضمون الفرادة بواسطة antiReplay middleware في Redis)
+    // يُخزَّن في حقل nonce بقاعدة البيانات للحفاظ على التوافق مع هيكل الجدول الحالي
+    const txIdentifier = `${DeviceID}:${Counter}`;
+
+    // التحقق من توقيع Ed25519
+    const isValid = verifyEd25519Signature({
+      deviceId: DeviceID,
+      counter: Counter,
+      challenge: Challenge,
+      signature: Signature,
+      luk
     });
+
     if (!isValid) {
-      return res.status(401).json({ success: false, error: { message: 'فشل التحقق من التوقيع البيومتري.' } });
+      // تسجيل فشل أمني في قاعدة البيانات للتدقيق الدائم
+      await Transaction.create({
+        // atheerToken: يخزن DeviceID في المعمارية الجديدة (للتوافق مع هيكل الجدول الحالي)
+        atheerToken: DeviceID,
+        nonce: txIdentifier,
+        signature: Signature,
+        authMethod: 'ED25519_ANTI_REPLAY',
+        transactionType,
+        customerMobile: DeviceID,
+        receiverMobile: receiverAccount,
+        amount,
+        currency,
+        description,
+        provider,
+        status: 'failed',
+        errorMessage: 'Security Failure: Ed25519 signature verification failed.',
+        metadata: {
+          deviceId: DeviceID,
+          counter: parseInt(Counter, 10),
+          challenge: Challenge,
+          securityEvent: 'SIGNATURE_FAILURE'
+        }
+      }).catch(err => console.error('❌ فشل تسجيل حدث الأمان:', err.message));
+
+      return res.status(401).json({ success: false, error: { message: 'فشل التحقق من التوقيع الرقمي.' } });
     }
 
-    // استخراج رقم هاتف الدافع من سجل التوكن (عدم الثقة بأي رقم مرسل من العميل)
-    const senderMobile = tokenRecord.assignedTo;
-    if (!senderMobile) {
-      return res.status(401).json({ success: false, error: { message: 'توكن غير مرتبط بمستخدم.' } });
-    }
-
-    // إنشاء سجل المعاملة
+    // إنشاء سجل المعاملة المعلَّقة
     const transaction = await Transaction.create({
-      amount,
-      atheerToken,
-      nonce,
-      signature,
-      authMethod: 'BIOMETRIC_CRYPTOGRAM',
+      // atheerToken: يخزن DeviceID في المعمارية الجديدة (للتوافق مع هيكل الجدول الحالي)
+      atheerToken: DeviceID,
+      nonce: txIdentifier,
+      signature: Signature,
+      authMethod: 'ED25519_ANTI_REPLAY',
       transactionType,
-      customerMobile: senderMobile,
+      customerMobile: DeviceID,
       receiverMobile: receiverAccount,
-      status: 'pending',
-      transactionRef,
+      amount,
       currency,
-      description
+      description,
+      provider,
+      status: 'pending',
+      metadata: {
+        deviceId: DeviceID,
+        counter: parseInt(Counter, 10),
+        challenge: Challenge
+      }
     });
 
-    // تمرير المعاملة إلى خدمة التوجيه (RouterService)
-    // تمرير جميع الحقول إلى خدمة التوجيه
+    // توجيه المعاملة المُتحقَّق منها إلى مزود الخدمة
     const result = await routerService.routeTransaction({
       transactionId: transaction.id,
       amount,
-      senderMobile,
+      senderMobile: DeviceID,
       receiverAccount,
       transactionType,
-      transactionRef,
       currency,
       description
     });
 
     if (result.success) {
       await transaction.update({ status: 'success', providerRef: result.providerRef });
-      if (typeof res.saveIdempotency === 'function') {
-        await res.saveIdempotency({ transactionId: transaction.id, status: 'success', providerRef: result.providerRef });
-      }
       return res.status(200).json({
         success: true,
         data: { transactionId: transaction.id, status: 'success', providerRef: result.providerRef }
@@ -96,12 +142,8 @@ export const processPayment = async (req, res, next) => {
     } else {
       await transaction.update({ status: 'failed', errorMessage: result.message });
       let errorMsg = result.message || 'فشل تنفيذ العملية المالية.';
-      if (result.errorCode === 'CONNECTION_ERROR') {
-        errorMsg = 'فشل الاتصال بالمحفظة. حاول لاحقاً.';
-      } else if (errorMsg.includes('رصيد')) {
-        errorMsg = 'رصيد الدافع غير كافٍ.';
-      } else if (errorMsg.includes('مستلم')) {
-        errorMsg = 'حساب المستلم غير موجود.';
+      if (result.errorCode === 'PROVIDER_CONNECTION_ERROR') {
+        errorMsg = 'فشل الاتصال بمزود الخدمة. حاول لاحقاً.';
       }
       return res.status(400).json({ success: false, error: { message: errorMsg } });
     }
@@ -110,6 +152,9 @@ export const processPayment = async (req, res, next) => {
     res.status(500).json({ success: false, error: { message: error.message } });
   }
 };
+
+// متوافق مع الإصدارات السابقة (backward-compatible alias)
+export const processPayment = chargePayment;
 
 export const getTransactionStatus = async (req, res, next) => {
   try {
@@ -121,3 +166,4 @@ export const getTransactionStatus = async (req, res, next) => {
     next(error);
   }
 };
+

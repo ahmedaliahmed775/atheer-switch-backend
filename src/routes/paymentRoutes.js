@@ -1,30 +1,31 @@
 import express from 'express';
-import { processPayment, getTransactionStatus } from '../controllers/paymentController.js';
-import tokenController from '../controllers/tokenController.js';
+import { chargePayment, processPayment, getTransactionStatus } from '../controllers/paymentController.js';
 import { authenticateMerchant } from '../middlewares/auth.js';
 import { checkIdempotency } from '../middlewares/idempotency.js';
+import { antiReplayCheck } from '../middlewares/antiReplay.js';
 
 const router = express.Router();
 
 /**
- * مسارات المدفوعات والتوكنز (Payment & Token Routes)
+ * مسارات المدفوعات (Payment Routes)
  * جميع المسارات تتطلب التحقق من هوية التاجر (API Key) عبر x-atheer-api-key.
  */
 router.use(authenticateMerchant);
 
 /**
- * @route   POST /api/v1/payments/process
- * @desc    معالجة طلب دفع جديد من SDK (يتوقع البيانات داخل body.body)
+ * @route   POST /api/v1/payments/charge
+ * @desc    معالجة طلب دفع بنظام التحقق عديم الحالة (Stateless Anti-Replay)
+ *          يتوقع: DeviceID, Counter, Challenge, Signature, amount, receiverAccount, transactionType
  * @access  Private (Merchant API Key)
  */
-router.post('/process', checkIdempotency, processPayment);
+router.post('/charge', antiReplayCheck, chargePayment);
 
 /**
- * @route   POST /api/v1/payments/tokens/provision
- * @desc    طلب تخصيص توكنز أوفلاين لمزود معين (JEEB/JAWALI)
+ * @route   POST /api/v1/payments/process
+ * @desc    نقطة نهاية متوافقة مع الإصدارات السابقة — تستخدم نفس منطق /charge
  * @access  Private (Merchant API Key)
  */
-router.post('/tokens/provision', tokenController.requestTokens);
+router.post('/process', antiReplayCheck, processPayment);
 
 /**
  * @route   GET /api/v1/payments/status/:id
