@@ -10,16 +10,18 @@ import redis from '../config/redis.js';
  * يستخدم سكريبت Lua لضمان العملية الذرية (Check-and-Set) وتجنب حالات السباق (Race Conditions).
  */
 
-// سكريبت Lua لفحص العداد وتحديثه بشكل ذري
+// سكريبت Lua لفحص العداد وتحديثه بشكل ذري مع تعيين TTL لتنظيف سجلات الأجهزة القديمة
 const ATOMIC_CHECK_AND_SET = `
   local key = KEYS[1]
   local incoming = tonumber(ARGV[1])
+  local ttl = tonumber(ARGV[2])
   local current = tonumber(redis.call('GET', key))
   if current == nil then current = -1 end
   if incoming <= current then
     return 0
   end
   redis.call('SET', key, tostring(incoming))
+  redis.call('EXPIRE', key, ttl)
   return 1
 `;
 
@@ -45,8 +47,9 @@ export const antiReplayCheck = async (req, res, next) => {
   const redisKey = `device:counter:${DeviceID}`;
 
   try {
-    // تنفيذ الفحص الذري عبر سكريبت Lua
-    const result = await redis.eval(ATOMIC_CHECK_AND_SET, 1, redisKey, String(incomingCounter));
+    // تنفيذ الفحص الذري عبر سكريبت Lua (TTL: 365 يوماً قابل للإعداد عبر DEVICE_COUNTER_TTL_SECONDS)
+    const ttlSeconds = parseInt(process.env.DEVICE_COUNTER_TTL_SECONDS || '31536000', 10);
+    const result = await redis.eval(ATOMIC_CHECK_AND_SET, 1, redisKey, String(incomingCounter), String(ttlSeconds));
 
     if (result === 0) {
       return res.status(403).json({

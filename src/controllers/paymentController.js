@@ -59,8 +59,9 @@ export const chargePayment = async (req, res, next) => {
 
     // تحديد مزود الخدمة بناءً على نوع المعاملة
     const provider = transactionType === 'P2P' ? 'MOCK' : 'JAWALI';
-    // تعريف nonce فريد للمعاملة (DeviceID + Counter مضمون الفرادة بواسطة antiReplay middleware)
-    const nonce = `${DeviceID}:${Counter}`;
+    // معرف المعاملة الفريد: DeviceID + Counter (مضمون الفرادة بواسطة antiReplay middleware في Redis)
+    // يُخزَّن في حقل nonce بقاعدة البيانات للحفاظ على التوافق مع هيكل الجدول الحالي
+    const txIdentifier = `${DeviceID}:${Counter}`;
 
     // التحقق من توقيع Ed25519
     const isValid = verifyEd25519Signature({
@@ -74,8 +75,9 @@ export const chargePayment = async (req, res, next) => {
     if (!isValid) {
       // تسجيل فشل أمني في قاعدة البيانات للتدقيق الدائم
       await Transaction.create({
+        // atheerToken: يخزن DeviceID في المعمارية الجديدة (للتوافق مع هيكل الجدول الحالي)
         atheerToken: DeviceID,
-        nonce,
+        nonce: txIdentifier,
         signature: Signature,
         authMethod: 'ED25519_ANTI_REPLAY',
         transactionType,
@@ -100,8 +102,9 @@ export const chargePayment = async (req, res, next) => {
 
     // إنشاء سجل المعاملة المعلَّقة
     const transaction = await Transaction.create({
+      // atheerToken: يخزن DeviceID في المعمارية الجديدة (للتوافق مع هيكل الجدول الحالي)
       atheerToken: DeviceID,
-      nonce,
+      nonce: txIdentifier,
       signature: Signature,
       authMethod: 'ED25519_ANTI_REPLAY',
       transactionType,
