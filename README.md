@@ -4,32 +4,73 @@
 
 ## مقدمة
 
-**Atheer Switch** هي بوابة دفع متطورة وعالية الأداء مصممة لتكون وسيطًا ماليًا بين تطبيقات الأندرويد (عبر Atheer Android SDK) ومزودي خدمات الدفع المختلفين مثل Jawali و WeCash. تهدف هذه البوابة إلى توفير حل آمن وفعال لمعالجة المدفوعات في الوقت الفعلي، مع التركيز على الأداء، الموثوقية، ومنع الاحتيال.
+**Atheer Switch** هي بوابة دفع متطورة وعالية الأداء تعمل كوسيط مالي بين تطبيقات الأندرويد (عبر Atheer Android SDK) ومزودي خدمات الدفع مثل Jawali. تعتمد البوابة على **محرك التحقق عديم الحالة (Stateless Anti-Replay Verification Engine)** الذي يستبدل نموذج التوكنز الأوفلاين القديم بنظام تحقق آمن وعالي الأداء.
+
+## المعمارية الجديدة: Stateless Anti-Replay Verification Engine
+
+### لماذا التحول من نموذج التوكنز؟
+
+النموذج القديم كان يعتمد على توزيع توكنز أوفلاين وتخزينها في PostgreSQL، مما أدى إلى:
+- **زيادة تعقيد الحالة (Stateful):** قاعدة البيانات تصبح نقطة فشل واحدة لكل عملية دفع.
+- **عرضة للسرقة:** التوكنز المُخزَّنة يمكن إعادة استخدامها عند اختراق قاعدة البيانات.
+- **تدهور الأداء:** كل طلب يتطلب I/O إلى قاعدة البيانات للبحث عن التوكن.
+
+### كيف يعمل المحرك الجديد؟
+
+```
+SDK                          Atheer Switch Backend
+ |                                   |
+ |  POST /api/v1/payments/charge     |
+ |  { DeviceID, Counter, Challenge,  |
+ |    Signature, amount, ... }       |
+ |---------------------------------->|
+ |                        [antiReplay Middleware]
+ |                        Redis: GET device:counter:{DeviceID}
+ |                        if Counter <= last_counter → 403 REJECTED
+ |                        else: SET device:counter:{DeviceID} = Counter
+ |                                   |
+ |                        [paymentController]
+ |                        deviceSeed = HMAC-SHA256(MASTER_SEED, DeviceID)
+ |                        LUK = HMAC-SHA256(deviceSeed, Counter)
+ |                        publicKey = Ed25519.derivePublic(LUK)
+ |                        verify(Signature, "DeviceID|Counter|Challenge", publicKey)
+ |                        if invalid → 401 + log SecurityFailure in PostgreSQL
+ |                                   |
+ |                        [jawaliAdapter]
+ |                        POST /b2b/direct-debit → Jawali Bank
+ |                                   |
+ |                        [Transaction Log]
+ |                        PostgreSQL: INSERT (Success/Failure)
+ |<----------------------------------|
+ |  200 { transactionId, providerRef }
+```
+
+### مكونات النظام الأمني
+
+| المكوِّن | التقنية | الوظيفة |
+| :------- | :------ | :------ |
+| Anti-Replay Firewall | Redis (Lua Atomic Script) | يرفض أي طلب بعداد ≤ آخر عداد مسجَّل لنفس الجهاز |
+| LUK Reconstruction | HMAC-SHA256 | يشتق مفتاح فريد لكل معاملة من seed الجهاز والعداد |
+| Signature Verification | Ed25519 | يتحقق من توقيع الحِمل `DeviceID\|Counter\|Challenge` |
+| Immutable Audit Log | PostgreSQL | يسجِّل جميع المعاملات بما فيها الفشل الأمني |
 
 ## الميزات الأساسية
 
--   **معالجة المدفوعات في الوقت الفعلي:** استقبال ومعالجة طلبات الدفع بسرعة وكفاءة.
--   **منع تكرار الإنفاق (Idempotency):** استخدام Redis لضمان معالجة كل طلب دفع مرة واحدة فقط.
--   **توجيه المعاملات الذكي:** توجيه المعاملات إلى مزود الخدمة المناسب (Jawali, WeCash, إلخ) باستخدام محولات قابلة للتوسيع.
--   **إحصائيات لحظية:** توفير بيانات وإحصائيات في الوقت الفعلي لأداء مزودي الخدمة باستخدام Redis.
--   **أمان عالي:** استخدام مفاتيح API للمصادقة وتطبيق أفضل الممارسات الأمنية.
--   **هندسة معمارية نظيفة:** تصميم المشروع وفقًا لمبادئ Clean Architecture لسهولة الصيانة والتوسع.
--   **توثيق شامل:** جميع التعليمات البرمجية، السجلات، والتوثيق مكتوبة باللغة العربية.
+- **معمارية عديمة الحالة (Stateless):** لا حاجة لتخزين حالة التوكن — Redis فقط للعداد.
+- **حماية قوية من إعادة التشغيل:** رفض ذري لأي طلب بعداد قديم أو مكرر.
+- **مفاتيح محدودة الاستخدام (LUK):** كل معاملة تستخدم مفتاحاً تشفيرياً فريداً مشتقاً من العداد.
+- **توجيه المعاملات الذكي:** P2M عبر jawaliAdapter، P2P عبر mockBankAdapter.
+- **تدقيق دائم لا يمكن تغييره:** سجل PostgreSQL لكل معاملة ناجحة أو محاولة اختراق.
+- **هندسة معمارية نظيفة:** Clean Architecture قابلة للتوسع.
 
 ## المتطلبات المسبقة
 
-قبل البدء، تأكد من تثبيت ما يلي على نظامك:
-
--   [Docker](https://www.docker.com/get-started)
--   [Docker Compose](https://docs.docker.com/compose/install/)
--   [Node.js](https://nodejs.org/en/download/) (يفضل استخدام الإصدار 20 أو أحدث)
--   [npm](https://www.npmjs.com/get-npm) (يأتي مع Node.js)
+- [Docker](https://www.docker.com/get-started) و [Docker Compose](https://docs.docker.com/compose/install/)
+- [Node.js](https://nodejs.org/en/download/) (الإصدار 20 أو أحدث)
 
 ## البدء السريع
 
-اتبع الخطوات التالية لتشغيل Atheer Switch على جهازك المحلي:
-
-### 1. استنساخ المستودع (Clone the Repository)
+### 1. استنساخ المستودع
 
 ```bash
 git clone https://github.com/your-username/atheer-switch.git
@@ -38,13 +79,11 @@ cd atheer-switch
 
 ### 2. إعداد المتغيرات البيئية
 
-قم بإنشاء ملف `.env` في الجذر الرئيسي للمشروع بناءً على ملف `.env.example`:
-
 ```bash
 cp .env.example .env
 ```
 
-ثم قم بتعديل ملف `.env` بالقيم المناسبة لبيئتك. على سبيل المثال:
+قم بتعديل ملف `.env` بالقيم المناسبة. **المتغيرات الأساسية للمحرك الجديد:**
 
 ```
 PORT=3000
@@ -58,48 +97,26 @@ DB_PASS=postgres_password
 
 REDIS_HOST=redis
 REDIS_PORT=6379
-REDIS_PASS=
 
 JAWALI_API_URL=https://api.jawali.com/v1
-JAWALI_AGENT_WALLET=YOUR_WALLET_ID
-JAWALI_API_KEY=YOUR_API_KEY
+JAWALI_GATEWAY_ID=YOUR_GATEWAY_ID
+JAWALI_GATEWAY_SECRET=YOUR_GATEWAY_SECRET
 
-JEEB_API_URL=http://localhost:8000/api/v1/jeeb
-JEEB_AGENT_WALLET=YOUR_JEEB_WALLET
-JEEB_API_KEY=YOUR_JEEB_API_KEY
+# محرك Anti-Replay — hex string عشوائي طوله 64 حرفاً (32 بايت)
+DEVICE_MASTER_SEED=your_64_char_hex_secret_here
 
-JWT_SECRET=super_secret_key_for_jwt
 API_KEY_HEADER=x-atheer-api-key
 ```
 
-### 3. تشغيل الخدمات باستخدام Docker Compose
+> **تحذير أمني:** `DEVICE_MASTER_SEED` هو سر المنظومة الأمنية بأكملها. احتفظ به بسرية تامة وقم بتدويره دورياً.
 
-سيقوم Docker Compose بإنشاء وتشغيل حاويات Node.js، PostgreSQL، و Redis:
+### 3. تشغيل الخدمات
 
 ```bash
 docker-compose up --build
 ```
 
-بعد اكتمال البناء والتشغيل، يجب أن يكون الخادم متاحًا على `http://localhost:3000`.
-
-### 4. تشغيل التطبيق محليًا (بدون Docker للـ Node.js)
-
-إذا كنت تفضل تشغيل تطبيق Node.js مباشرة على جهازك (مع بقاء PostgreSQL و Redis في Docker):
-
-أولاً، تأكد من أن PostgreSQL و Redis يعملان عبر Docker Compose:
-
-```bash
-docker-compose up postgres redis
-```
-
-ثم قم بتثبيت التبعيات وتشغيل التطبيق:
-
-```bash
-npm install
-npm run dev # للتشغيل في وضع التطوير مع nodemon
-# أو
-npm start # للتشغيل في وضع الإنتاج
-```
+الخادم سيكون متاحاً على `http://localhost:3000`.
 
 ## هيكل المشروع
 
@@ -109,47 +126,68 @@ atheer-switch/
 │   ├── config/             # إعدادات قاعدة البيانات و Redis
 │   │   ├── database.js
 │   │   └── redis.js
-│   ├── middlewares/        # وظائف Middleware للمصادقة، منع التكرار، ومعالجة الأخطاء
+│   ├── middlewares/        # Middleware للمصادقة، Anti-Replay، ومعالجة الأخطاء
+│   │   ├── antiReplay.js   # 🆕 جدار الحماية من هجمات إعادة التشغيل
 │   │   ├── auth.js
 │   │   ├── idempotency.js
 │   │   └── errorLogger.js
-│   ├── services/           # منطق الأعمال الأساسي (توجيه المعاملات، الإحصائيات)
+│   ├── services/           # منطق الأعمال الأساسي
 │   │   ├── routerService.js
 │   │   └── statsService.js
-│   ├── adapters/           # محولات لمزودي خدمات الدفع الخارجيين
+│   ├── adapters/           # محولات مزودي الدفع
 │   │   ├── jawaliAdapter.js
 │   │   └── mockBankAdapter.js
-│   ├── controllers/        # منطق معالجة الطلبات والاستجابات
-│   │   ├── paymentController.js
+│   ├── controllers/        # معالجة الطلبات والاستجابات
+│   │   ├── paymentController.js  # 🔄 محرك التحقق عديم الحالة
 │   │   └── statsController.js
-│   ├── models/             # تعريف نماذج قاعدة البيانات (Sequelize)
-│   │   ├── Transaction.js
+│   ├── models/             # نماذج PostgreSQL (Sequelize)
+│   │   ├── Transaction.js  # سجل التدقيق الدائم
 │   │   └── Merchant.js
-│   ├── routes/             # تعريف مسارات API
-│   │   ├── paymentRoutes.js
+│   ├── utils/
+│   │   └── cryptoUtils.js  # 🔄 reconstructLUK + verifyEd25519Signature
+│   ├── routes/
+│   │   ├── paymentRoutes.js  # 🔄 /charge (جديد) + /process + /status
 │   │   └── adminRoutes.js
-│   ├── app.js              # إعداد تطبيق Express الرئيسي
-│   └── server.js           # نقطة الدخول لتشغيل الخادم
-├── docs/                   # وثائق المشروع (توثيق API)
-│   └── API_SPEC_AR.md
-├── .env.example            # مثال لملف المتغيرات البيئية
-├── docker-compose.yml      # إعداد Docker Compose للخدمات
-├── Dockerfile              # ملف Docker لبناء صورة التطبيق
-└── package.json            # تعريف المشروع والتبعيات
+│   ├── app.js
+│   └── server.js
+├── docs/
+│   └── API_SPEC_AR.md      # 🔄 توثيق API المحدَّث
+├── .env.example
+├── docker-compose.yml
+├── Dockerfile
+└── package.json
 ```
 
 ## استخدام API
 
-يرجى الرجوع إلى ملف [API_SPEC_AR.md](docs/API_SPEC_AR.md) للحصول على توثيق مفصل لنقاط نهاية API، أمثلة الطلبات والاستجابات، ومتطلبات المصادقة.
+### نقطة النهاية الرئيسية: `/api/v1/payments/charge`
+
+```http
+POST /api/v1/payments/charge
+x-atheer-api-key: <merchant_api_key>
+Content-Type: application/json
+
+{
+  "DeviceID": "DEVICE-UNIQUE-ID-001",
+  "Counter": 42,
+  "Challenge": "ch_a1b2c3d4e5f6",
+  "Signature": "BASE64_ED25519_SIGNATURE",
+  "amount": 1500.00,
+  "receiverAccount": "uuid-of-merchant",
+  "transactionType": "P2M",
+  "currency": "YER"
+}
+```
+
+يرجى الرجوع إلى [API_SPEC_AR.md](docs/API_SPEC_AR.md) للتوثيق الكامل.
 
 ## المساهمة
 
-نرحب بالمساهمات في تطوير Atheer Switch. يرجى قراءة إرشادات المساهمة (قيد الإنشاء) قبل تقديم أي طلبات سحب (Pull Requests).
+نرحب بالمساهمات. يرجى قراءة إرشادات المساهمة قبل تقديم طلبات السحب (Pull Requests).
 
 ## الترخيص
 
-هذا المشروع مرخص تحت ترخيص MIT. انظر ملف `LICENSE` (قيد الإنشاء) لمزيد من التفاصيل.
+هذا المشروع مرخص تحت ترخيص MIT.
 
 ## اتصل بنا
 
-للدعم أو الاستفسارات، يرجى التواصل مع فريق Atheer Fintech.

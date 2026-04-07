@@ -4,7 +4,6 @@ import AdminJSExpress from '@adminjs/express';
 import AdminJSSequelize from '@adminjs/sequelize';
 import Merchant from '../models/Merchant.js';
 import Transaction from '../models/Transaction.js';
-import OfflineToken from '../models/OfflineToken.js';
 import statsService from '../services/statsService.js';
 import express from 'express';
 
@@ -109,9 +108,6 @@ const adminOptions = {
         }
       },
     },
-    {
-      resource: OfflineToken,
-    },
   ],
   dashboard: {
     component: false, // سنستخدم route مخصص
@@ -125,7 +121,6 @@ const adminOptions = {
         // موارد
         Merchant: 'التجار',
         Transaction: 'المعاملات',
-        OfflineToken: 'التوكنات',
         // صفحات
         Dashboard: 'لوحة الإحصائيات',
       },
@@ -164,24 +159,6 @@ const adminOptions = {
             show: 'عرض تفاصيل المعاملة',
             delete: 'حذف المعاملة',
             list: 'قائمة المعاملات',
-          },
-        },
-        OfflineToken: {
-          properties: {
-            tokenValue: 'قيمة التوكن',
-            providerName: 'مزود التوكن',
-            status: 'حالة التوكن',
-            assignedTo: 'مخصص لـ',
-            expiryDate: 'تاريخ الانتهاء',
-            createdAt: 'تاريخ الإنشاء',
-            updatedAt: 'آخر تحديث',
-          },
-          actions: {
-            new: 'إضافة توكن',
-            edit: 'تعديل التوكن',
-            show: 'عرض تفاصيل التوكن',
-            delete: 'حذف التوكن',
-            list: 'قائمة التوكنات',
           },
         },
       },
