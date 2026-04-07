@@ -31,7 +31,7 @@ export function reconstructLUK(deviceMasterSeed, incomingCounter) {
 
 /**
  * التحقق من توقيع Ed25519 باستخدام مفتاح LUK المعاد بناؤه.
- * الحمولة الموقَّعة: `${DeviceID}|${Counter}|${Challenge}`
+ * الحمولة الموقَّعة: `${deviceId}|${counter}|${timestamp}`
  *
  * يشتق المفتاح العام من seed الـ LUK (32 بايت) باستخدام تنسيق PKCS#8 المُمدَّد،
  * ثم يتحقق من التوقيع المُرسَل من SDK.
@@ -39,15 +39,15 @@ export function reconstructLUK(deviceMasterSeed, incomingCounter) {
  * @param {Object} params
  * @param {string}        params.deviceId  - معرف الجهاز
  * @param {number|string} params.counter   - عداد المعاملة
- * @param {string}        params.challenge - التحدي الخاص بالمعاملة
+ * @param {number|string} params.timestamp - الطابع الزمني للمعاملة
  * @param {string}        params.signature - التوقيع Base64 المُرسَل من SDK
  * @param {Buffer}        params.luk       - مفتاح LUK (32 بايت)
  * @returns {boolean} - true إذا كان التوقيع صالحاً، false في أي حالة أخرى
  */
-export function verifyEd25519Signature({ deviceId, counter, challenge, signature, luk }) {
-  if (!deviceId || counter === undefined || !challenge || !signature || !luk) return false;
+export function verifyEd25519Signature({ deviceId, counter, timestamp, signature, luk }) {
+  if (!deviceId || counter === undefined || !timestamp || !signature || !luk) return false;
   try {
-    const payload = Buffer.from(`${deviceId}|${counter}|${challenge}`);
+    const payload = Buffer.from(`${deviceId}|${counter}|${timestamp}`);
     const sigBuf = Buffer.from(signature, 'base64');
 
     // بناء مفتاح PKCS#8 من بادئة ثابتة + seed الـ LUK (32 بايت)
