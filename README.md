@@ -13,9 +13,7 @@
 ---
 
 ## نظرة عامة
-
-**Atheer Switch Backend** هو المحرك المركزي (Payment Switch) الذي يعالج ويتحقق من معاملات الدفع القادمة من [Atheer SDK]([https://github.com/ahmedaliahmed775/atheer-sdk]). يعمل كبوابة ذكية بين تطبيقات التجار والمحافظ الإلكترونية اليمنية.
-
+**Atheer Switch Backend** هو المحرك المركزي (Payment Switch) الذي يعالج ويتحقق من معاملات الدفع القادمة من [Atheer SDK](https://github.com/ahmedaliahmed775/atheer-sdk). يعمل كبوابة ذكية بين تطبيقات التجار والمحافظ الإلكترونية اليمنية.
 ### المعمارية
 
 ```
