@@ -6,7 +6,17 @@ import { reconstructLUK, verifyHmacSignature } from '../utils/cryptoUtils.js';
 /**
  * محرك التحقق عديم الحالة (Stateless Anti-Replay Verification Engine)
  *
- * تدفق المعالجة:
+ * ## اتفاقية المعرفات في بيئة التطبيق الموحد (Unified App):
+ *
+ *   deviceId        = رقم هاتف العميل (الدافع / Payer)
+ *                     → يُستخدم لاشتقاق deviceSeed تشفيرياً
+ *                     → يُمرَّر كـ customerIdentifier لجوالي (senderMobile)
+ *
+ *   receiverAccount = رقم هاتف التاجر (المستلم / Merchant)
+ *                     → يُطابق Merchant.providerWalletId أو Merchant.phone
+ *                     → يُمرَّر كـ targetWalletId لجوالي (merchantWalletId)
+ *
+ * ## تدفق المعالجة:
  * 1. يُستقبَل الحِمل: deviceId | counter | timestamp | signature + بيانات الدفع
  * 2. يتحقق antiReplay middleware من العداد مسبقاً (HTTP 403 إذا أُعيد الاستخدام)
  * 3. يُشتَق seed الجهاز: HMAC-SHA256(DEVICE_MASTER_SEED, deviceId)

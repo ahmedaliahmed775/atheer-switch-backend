@@ -17,6 +17,12 @@ const Merchant = sequelize.define('Merchant', {
     allowNull: false,
     comment: 'اسم التاجر أو الشركة'
   },
+  phone: {
+    type: DataTypes.STRING,
+    unique: true,
+    allowNull: true,
+    comment: 'رقم هاتف التاجر المسجل — المعرف البشري الوحيد، يتطابق مع providerWalletId لدى جوالي'
+  },
   apiKey: {
     type: DataTypes.STRING,
     unique: true,

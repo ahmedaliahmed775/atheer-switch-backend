@@ -1,3 +1,4 @@
+import { Op } from 'sequelize';
 import jawaliAdapter from '../adapters/jawaliAdapter.js';
 import mockBankAdapter from '../adapters/mockBankAdapter.js';
 import statsService from './statsService.js';
@@ -37,10 +38,21 @@ class RouterService {
       provider = 'MOCK';
     } else if (transactionType === 'P2M') {
       // شراء من تاجر
-      // البحث عن التاجر عبر معرفه
-      const merchant = await Merchant.findOne({ where: { id: receiverAccount } });
+      // البحث عن التاجر بـ providerWalletId (رقم محفظته لدى المزود) أو phone (رقم هاتفه)
+      // receiverAccount = رقم هاتف التاجر في سيناريو Unified App
+      const merchant = await Merchant.findOne({
+        where: {
+          [Op.or]: [
+            { providerWalletId: receiverAccount },
+            { phone: receiverAccount }
+          ]
+        }
+      });
       if (!merchant) {
-        return { success: false, message: 'لم يتم العثور على التاجر.' };
+        return {
+          success: false,
+          message: `لم يتم العثور على تاجر مرتبط بالرقم: ${receiverAccount}.`
+        };
       }
       // تحديد مزود الخدمة من بيانات التاجر (يمكن التوسعة لاحقاً)
       provider = merchant.providerName || 'JAWALI'; // نفترض جوالي كافتراضي للتوافق
