@@ -33,6 +33,12 @@ const Merchant = sequelize.define('Merchant', {
     allowNull: true,
     comment: 'رابط التنبيهات لإرسال تحديثات المعاملات'
   },
+  providerName: {
+    type: DataTypes.STRING,
+    allowNull: false,
+    defaultValue: 'JAWALI',
+    comment: 'اسم مزود الدفع الخاص بالتاجر (JAWALI, KREIMI, UMFLUUS, MOCK...)'
+  },
   providerWalletId: {
     type: DataTypes.STRING,
     allowNull: true,

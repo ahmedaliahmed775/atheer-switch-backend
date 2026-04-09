@@ -1,22 +1,29 @@
 import axios from 'axios';
 import { v4 as uuidv4 } from 'uuid';
+import { PaymentAdapter } from './PaymentAdapter.js';
 
 /**
  * محول بنك جوالي (Jawali Bank Adapter)
- * يتصل مع سيرفر البنك الوهمي الذي يحاكي محفظة جوالي.
+ * يتصل مع سيرفر البنك الذي يحاكي محفظة جوالي.
  * تم تحديثه ليعتمد على مسار B2B Direct Debit الخاص بالبوابات الموثوقة.
+ *
+ * A-03: يمدد PaymentAdapter لضمان اتساق الواجهة.
+ * B-04: إصلاح حلقة التكرار اللانهائية عند فشل المصادقة.
  */
-class JawaliAdapter {
+class JawaliAdapter extends PaymentAdapter {
   constructor() {
+    super();
     this.apiUrl = process.env.JAWALI_API_URL || 'http://localhost:3001';
-    this.callerId = 'AtheerSwitch'; // معرف المتصل (السويتش)
-    this.accessToken = null; // توكن المصادقة الخاص بالسويتش مع البنك
+    this.callerId = 'AtheerSwitch';
+    this.accessToken = null;
+  }
+
+  get providerName() {
+    return 'JAWALI';
   }
 
   /**
    * دالة مساعدة لبناء هيكل الطلب المكون من header و body.
-   * @param {object} bodyData - البيانات التي سيتم إرسالها في الـ body.
-   * @returns {object} - الطلب الجاهز للإرسال.
    */
   buildPayload(bodyData) {
     return {
@@ -58,8 +65,6 @@ class JawaliAdapter {
    * يضمن أن السويتش لديه توكن صالح قبل إرسال أي طلب.
    */
   async ensureAccessToken() {
-    // ملاحظة: في بيئة حقيقية، يجب التحقق من صلاحية التوكن قبل إعادة استخدامه.
-    // هنا، للتبسيط، سنسجل الدخول مرة واحدة فقط.
     if (!this.accessToken) {
       await this.login();
     }
@@ -67,18 +72,23 @@ class JawaliAdapter {
 
   /**
    * تنفيذ عملية خصم مباشر من حساب العميل إلى حساب التاجر.
-   * @param {string} customerPhone - رقم هاتف العميل صاحب الحساب.
-   * @param {string} merchantWalletId - رقم محفظة التاجر المستفيد.
-   * @param {number} amount - المبلغ المطلوب خصمه.
-   * @param {string} transactionRef - الرقم المرجعي للعملية.
-   * @returns {Promise<object>} - نتيجة العملية.
+   *
+   * B-04 Fix: إضافة عداد محاولات (_retryCount) لمنع التكرار اللانهائي
+   * عند فشل المصادقة. الحد الأقصى: محاولة واحدة لإعادة المصادقة.
+   *
+   * @param {string} customerPhone      - رقم هاتف العميل صاحب الحساب.
+   * @param {string} merchantWalletId   - رقم محفظة التاجر المستفيد.
+   * @param {number} amount             - المبلغ المطلوب خصمه.
+   * @param {string} transactionRef     - الرقم المرجعي للعملية.
+   * @param {number} [_retryCount=0]    - عداد المحاولات الداخلي (لا تمرره يدوياً).
+   * @returns {Promise<Object>} - نتيجة العملية.
    */
-  async executeDirectDebit(customerPhone, merchantWalletId, amount, transactionRef) {
+  async executeDirectDebit(customerPhone, merchantWalletId, amount, transactionRef, _retryCount = 0) {
     await this.ensureAccessToken();
 
     const debitUrl = `${this.apiUrl}/api/v1/b2b/direct-debit`;
     const payload = this.buildPayload({
-      customerIdentifier: customerPhone, // يتم فك تشفيره والتحقق منه داخل السويتش
+      customerIdentifier: customerPhone,
       targetWalletId: merchantWalletId,
       amount: amount,
       transactionRef: transactionRef || uuidv4(),
@@ -94,7 +104,6 @@ class JawaliAdapter {
         timeout: 20000,
       });
 
-      // التحقق من نجاح العملية بناءً على استجابة البنك
       if (response.data?.body?.status === 'SUCCESS') {
         return {
           success: true,
@@ -109,11 +118,11 @@ class JawaliAdapter {
         };
       }
     } catch (error) {
-      // التعامل مع أخطاء الشبكة أو انتهاء صلاحية التوكن
-      if (error.response && error.response.status === 401) {
-        console.log('[Jawali Adapter] Access token expired or invalid. Re-authenticating...');
-        this.accessToken = null; // إجبار إعادة تسجيل الدخول
-        return this.executeDirectDebit(customerPhone, merchantWalletId, amount, transactionRef);
+      // B-04 Fix: التعامل مع انتهاء صلاحية التوكن (محاولة واحدة فقط)
+      if (error.response && error.response.status === 401 && _retryCount < 1) {
+        console.log('[Jawali Adapter] Access token expired. Re-authenticating (attempt 1/1)...');
+        this.accessToken = null;
+        return this.executeDirectDebit(customerPhone, merchantWalletId, amount, transactionRef, _retryCount + 1);
       }
 
       console.error('[Jawali Direct Debit Error]', error.response?.data || error.message);
@@ -123,6 +132,25 @@ class JawaliAdapter {
         message: 'Failed to connect to the payment provider.',
       };
     }
+  }
+
+  /**
+   * تحويل P2P عبر Jawali (غير مدعوم حالياً — يُوجَّه إلى MockBank).
+   */
+  async p2pTransfer({ senderMobile, receiverMobile, amount }) {
+    return {
+      success: false,
+      errorCode: 'NOT_SUPPORTED',
+      message: 'P2P transfers are not supported by Jawali adapter. Use MockBank.',
+    };
+  }
+
+  /**
+   * معالجة عملية دفع عامة (Fallback).
+   */
+  async processPayment(data) {
+    const { senderMobile, receiverAccount, amount, id } = data;
+    return this.executeDirectDebit(senderMobile, receiverAccount, amount, id);
   }
 }
 

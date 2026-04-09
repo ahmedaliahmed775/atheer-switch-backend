@@ -8,6 +8,8 @@ import redis from '../config/redis.js';
  * - إذا كان incoming_counter > last_counter   → يُحدِّث العداد في Redis ويُمرِّر الطلب
  *
  * يستخدم سكريبت Lua لضمان العملية الذرية (Check-and-Set) وتجنب حالات السباق (Race Conditions).
+ *
+ * C-02 Fix: يدعم كلاً من camelCase (من SDK) و PascalCase (للتوافق).
  */
 
 // سكريبت Lua لفحص العداد وتحديثه بشكل ذري مع تعيين TTL لتنظيف سجلات الأجهزة القديمة
@@ -27,24 +29,26 @@ const ATOMIC_CHECK_AND_SET = `
 
 export const antiReplayCheck = async (req, res, next) => {
   const data = req.body.body || req.body;
-  const { DeviceID, Counter } = data;
+  // C-02: دعم كلا التنسيقين — camelCase (من SDK) و PascalCase (للتوافق مع الإصدارات القديمة)
+  const deviceId = data.deviceId || data.DeviceID;
+  const counter = data.counter ?? data.Counter;
 
-  if (!DeviceID || Counter === undefined || Counter === null) {
+  if (!deviceId || counter === undefined || counter === null) {
     return res.status(400).json({
       success: false,
-      error: { message: 'DeviceID و Counter مطلوبان للتحقق من مكافحة إعادة التشغيل.' }
+      error: { message: 'deviceId و counter مطلوبان للتحقق من مكافحة إعادة التشغيل.' }
     });
   }
 
-  const incomingCounter = parseInt(Counter, 10);
+  const incomingCounter = parseInt(counter, 10);
   if (isNaN(incomingCounter)) {
     return res.status(400).json({
       success: false,
-      error: { message: 'Counter يجب أن يكون رقماً صحيحاً.' }
+      error: { message: 'counter يجب أن يكون رقماً صحيحاً.' }
     });
   }
 
-  const redisKey = `device:counter:${DeviceID}`;
+  const redisKey = `device:counter:${deviceId}`;
 
   try {
     // تنفيذ الفحص الذري عبر سكريبت Lua (TTL: 365 يوماً قابل للإعداد عبر DEVICE_COUNTER_TTL_SECONDS)

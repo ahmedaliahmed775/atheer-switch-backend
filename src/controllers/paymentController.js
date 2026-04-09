@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import Transaction from '../models/Transaction.js';
 import routerService from '../services/routerService.js';
-import { reconstructLUK, verifyEd25519Signature } from '../utils/cryptoUtils.js';
+import { reconstructLUK, verifyHmacSignature } from '../utils/cryptoUtils.js';
 
 /**
  * محرك التحقق عديم الحالة (Stateless Anti-Replay Verification Engine)
@@ -11,24 +11,25 @@ import { reconstructLUK, verifyEd25519Signature } from '../utils/cryptoUtils.js'
  * 2. يتحقق antiReplay middleware من العداد مسبقاً (HTTP 403 إذا أُعيد الاستخدام)
  * 3. يُشتَق seed الجهاز: HMAC-SHA256(DEVICE_MASTER_SEED, deviceId)
  * 4. يُعاد بناء LUK:    HMAC-SHA256(deviceSeed, counter)
- * 5. يُتحقَق من توقيع Ed25519 على الحِمل: deviceId|counter|timestamp
+ * 5. يُتحقَق من توقيع HMAC-SHA256 على الحِمل: deviceId|counter|timestamp
  * 6. تُوجَّه المعاملة إلى jawaliAdapter (P2M) أو mockBankAdapter (P2P)
  * 7. تُسجَّل حالة المعاملة النهائية في PostgreSQL للتدقيق الدائم
  */
 export const chargePayment = async (req, res, next) => {
   try {
     const data = req.body.body || req.body;
-    const {
-      deviceId,
-      counter,
-      timestamp,
-      signature,
-      amount,
-      receiverAccount,
-      transactionType,
-      currency = 'YER',
-      description = ''
-    } = data;
+    // C-02: دعم كلا التنسيقين camelCase (من SDK) و PascalCase (للتوافق)
+    const deviceId = data.deviceId || data.DeviceID;
+    const counter = data.counter ?? data.Counter;
+    const timestamp = data.timestamp || data.Timestamp;
+    const signature = data.signature || data.Signature;
+    const amount = data.amount;
+    const receiverAccount = data.receiverAccount;
+    const transactionType = data.transactionType;
+    const currency = data.currency || 'YER';
+    const description = data.description || '';
+    const transactionRef = data.transactionRef || '';
+    const merchantId = data.merchantId || '';
 
     // التحقق من الحقول الأساسية
     if (!deviceId || counter === undefined || !timestamp || !signature || !amount || !receiverAccount || !transactionType) {
@@ -40,13 +41,31 @@ export const chargePayment = async (req, res, next) => {
       });
     }
 
+    // Fix #8: التحقق من عمر الطلب — رفض الطلبات المتأخرة أو ذات الطابع الزمني المستقبلي
+    const maxAgeMs = parseInt(process.env.REQUEST_MAX_AGE_MS || '300000', 10); // 5 دقائق افتراضياً
+    const now = Date.now();
+    const tsNum = Number(timestamp);
+    if (isNaN(tsNum) || tsNum > now + 30000) {
+      // طابع زمني مستقبلي (مسموح 30 ثانية فرق ساعة)
+      return res.status(400).json({
+        success: false,
+        error: { message: 'الطابع الزمني للطلب غير صالح (مستقبلي).' }
+      });
+    }
+    if (now - tsNum > maxAgeMs) {
+      return res.status(400).json({
+        success: false,
+        error: { message: `انتهت صلاحية الطلب. الحد الأقصى: ${maxAgeMs / 1000} ثانية.` }
+      });
+    }
+
     const masterSeed = process.env.DEVICE_MASTER_SEED;
     if (!masterSeed) {
       console.error('❌ DEVICE_MASTER_SEED غير محدد في المتغيرات البيئية.');
       return res.status(500).json({ success: false, error: { message: 'خطأ في إعداد الخادم.' } });
     }
 
-    // اشتقاق seed الجهاز الفريد من الـ seed الرئيسي ومعرف الجهاز
+    // C-03: اشتقاق seed الجهاز الفريد من الـ seed الرئيسي ومعرف الجهاز
     const deviceSeedHmac = crypto.createHmac('sha256', Buffer.from(masterSeed, 'hex'));
     deviceSeedHmac.update(deviceId);
     const deviceSeed = deviceSeedHmac.digest();
@@ -60,11 +79,10 @@ export const chargePayment = async (req, res, next) => {
     // تحديد مزود الخدمة بناءً على نوع المعاملة
     const provider = transactionType === 'P2P' ? 'MOCK' : 'JAWALI';
     // معرف المعاملة الفريد: deviceId + counter (مضمون الفرادة بواسطة antiReplay middleware في Redis)
-    // يُخزَّن في حقل nonce بقاعدة البيانات للحفاظ على التوافق مع هيكل الجدول الحالي
     const txIdentifier = `${deviceId}:${counter}`;
 
-    // التحقق من توقيع Ed25519
-    const isValid = verifyEd25519Signature({
+    // C-01: التحقق من توقيع HMAC-SHA256 (مطابق لمنطق SDK)
+    const isValid = verifyHmacSignature({
       deviceId,
       counter,
       timestamp,
@@ -75,11 +93,10 @@ export const chargePayment = async (req, res, next) => {
     if (!isValid) {
       // تسجيل فشل أمني في قاعدة البيانات للتدقيق الدائم
       await Transaction.create({
-        // atheerToken: يخزن deviceId في المعمارية الجديدة (للتوافق مع هيكل الجدول الحالي)
         atheerToken: deviceId,
         nonce: txIdentifier,
         signature,
-        authMethod: 'ED25519_ANTI_REPLAY',
+        authMethod: 'HMAC_SHA256_ANTI_REPLAY',
         transactionType,
         customerMobile: deviceId,
         receiverMobile: receiverAccount,
@@ -87,8 +104,9 @@ export const chargePayment = async (req, res, next) => {
         currency,
         description,
         provider,
+        transactionRef,
         status: 'failed',
-        errorMessage: 'Security Failure: Ed25519 signature verification failed.',
+        errorMessage: 'Security Failure: HMAC-SHA256 signature verification failed.',
         metadata: {
           deviceId,
           counter: parseInt(counter, 10),
@@ -102,11 +120,10 @@ export const chargePayment = async (req, res, next) => {
 
     // إنشاء سجل المعاملة المعلَّقة
     const transaction = await Transaction.create({
-      // atheerToken: يخزن deviceId في المعمارية الجديدة (للتوافق مع هيكل الجدول الحالي)
       atheerToken: deviceId,
       nonce: txIdentifier,
       signature,
-      authMethod: 'ED25519_ANTI_REPLAY',
+      authMethod: 'HMAC_SHA256_ANTI_REPLAY',
       transactionType,
       customerMobile: deviceId,
       receiverMobile: receiverAccount,
@@ -114,11 +131,13 @@ export const chargePayment = async (req, res, next) => {
       currency,
       description,
       provider,
+      transactionRef,
       status: 'pending',
       metadata: {
         deviceId,
         counter: parseInt(counter, 10),
-        timestamp
+        timestamp,
+        merchantId
       }
     });
 
@@ -166,4 +185,3 @@ export const getTransactionStatus = async (req, res, next) => {
     next(error);
   }
 };
-
